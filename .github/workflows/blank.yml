@@ -1,20 +1,16 @@
 name: Build Android APK
 
 on:
-  # This allows you to trigger the build manually from the GitHub website
   workflow_dispatch:
-  # This triggers a new build every time you update your code
   push:
     branches:
       - main
 
 env:
-  # Suppresses the Node.js 20 deprecation warning
   ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
 
 jobs:
   build:
-    # GitHub provides a free Linux server with Android tools pre-installed!
     runs-on: ubuntu-latest
 
     steps:
@@ -28,7 +24,7 @@ jobs:
 
       - name: Install Flet and Dependencies
         run: |
-          pip install flet requests
+          pip install flet requests flet-audio
 
       - name: Setup Flutter (Required for Flet Mobile)
         uses: subosito/flutter-action@v2
@@ -36,6 +32,7 @@ jobs:
           channel: 'stable'
 
       - name: Build the APK
+        # Because your file is now named main.py, Flet will find it automatically!
         run: |
           flet build apk --project devotional --org com.edu.devotional
 
@@ -43,8 +40,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Daily-Devotional-App
-          # This is where Flet saves the compiled APK
           path: build/apk/**/*.apk
-          # --- THE QUOTA FIX ---
-          # Auto-deletes the file from GitHub's servers after 3 days to prevent storage limits!
           retention-days: 3
