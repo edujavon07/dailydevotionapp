@@ -399,7 +399,7 @@ class OpenAICompatibleBackend(BaseBackend):
         )
         if custom_inst: prompt += f"SPECIAL INSTRUCTION FROM USER: {custom_inst}\n\n"
         prompt += (
-            "CRITICAL: Keep all structural headers (like 'Date:', 'Verse:', 'Prayer:', 'Title:', etc.) exactly the same. Only change the content text. "
+            "CRITICAL: Keep all structural headers exactly the same. Only change the content text. "
             "Output the full, updated document preserving all original formatting and separators.\n\n"
             f"CONTENT TO REVISE:\n{full_content}"
         )
@@ -521,7 +521,7 @@ class GeminiBackend(BaseBackend):
         )
         if custom_inst: prompt += f"SPECIAL INSTRUCTION FROM USER: {custom_inst}\n\n"
         prompt += (
-            "CRITICAL: Keep all structural headers (like 'Date:', 'Verse:', 'Prayer:', 'Title:', etc.) exactly the same. Only change the content text. "
+            "CRITICAL: Keep all structural headers exactly the same. Only change the content text. "
             "Output the full, updated document preserving all original formatting and separators.\n\n"
             f"CONTENT TO REVISE:\n{full_content}"
         )
@@ -901,25 +901,17 @@ def format_and_clean(text):
     for h in headers:
         text = re.sub(r'([^\n])\s*(' + h + r')', r'\1\n\n\2', text)
         text = re.sub(r'(' + h + r')\s*([^\n])', r'\1\n\2', text)
-    text = re.sub(r'([^\n])\s*(Question \d+:)', r'\1\n\n\2', text)
-    text = re.sub(r'(Question \d+:)\s*([^\n])', r'\1\n\2', text)
-    return text.strip()
-
-def extract_title(content):
-    lines = [line.strip() for line in content.split('\n') if line.strip() and not line.startswith('---')]
-    for i, line in enumerate(lines):
-        if line.startswith("Date:"): return lines[i+1][:37] + "..." if i + 1 < len(lines) and len(lines[i+1]) > 40 else lines[i+1] if i + 1 < len(lines) else ""
-        elif line.startswith("Title:") or line.startswith("Story Title:") or line.startswith("Poem Title:"):
-            v = line.split(":", 1)[-1].strip()
-            return v[:37] + "..." if len(v) > 40 else v
-        elif line.startswith("Verse:") or line.startswith("Main Text:") or line.startswith("Passage:") or line.startswith("Focus Verse:") or line.startswith("S - Scripture:") or line.startswith("The Verse:") or line.startswith("Focus Promise:") or line.startswith("The Anchor Verse:") or line.startswith("Breath Verse:"):
-            if i + 1 < len(lines):
-                v = lines[i+1]
-                return v[:37] + "..." if len(v) > 40 else v
-    if lines: return lines[0][:37] + "..." if len(lines[0]) > 40 else lines[0]
-    return "Saved Document"
+        if lines: return lines[0][:37] + "..." if len(lines[0]) > 40 else lines[0]
+        return "Saved Document"
 
 def set_window_size(page, w, h):
+    # --- THE MOBILE VIEWPORT FIX ---
+    # Never force fixed pixel dimensions on phones! It causes the screen to clip, zoom, and shift.
+    try:
+        if page.platform == ft.PagePlatform.ANDROID or page.platform == ft.PagePlatform.IOS:
+            return
+    except: pass
+    
     try:
         page.window.width = w
         page.window.height = h
@@ -932,6 +924,13 @@ def set_window_size(page, w, h):
 def main(page: ft.Page):
     page.title = "Daily Devotional"
     
+    # --- THE SAFE AREA / NOTCH FIX ---
+    # Prevents the UI from rendering underneath the Android top status bar/camera hole!
+    try:
+        if page.platform == ft.PagePlatform.ANDROID or page.platform == ft.PagePlatform.IOS:
+            page.padding = ft.padding.only(top=40, left=5, right=5, bottom=10)
+    except: pass
+    
     # UI State Dictionary (Bulletproof alternative to globals and page.session)
     app_state = {
         "last_audio_path": "",
@@ -943,9 +942,10 @@ def main(page: ft.Page):
     
     set_window_size(page, 450, 850)
     try:
-        page.window.resizable = False 
-        page.window.maximizable = False
-        page.window.always_on_top = False
+        if page.platform != ft.PagePlatform.ANDROID and page.platform != ft.PagePlatform.IOS:
+            page.window.resizable = False 
+            page.window.maximizable = False
+            page.window.always_on_top = False
     except Exception: pass
         
     page.scroll = None
@@ -990,19 +990,33 @@ def main(page: ft.Page):
     
     scroll_speed_slider = ft.Slider(min=0, max=100, divisions=100, value=20)
     slider_label = ft.Text(f"{20 / 20.0:.1f}x", size=14, weight="bold", color=ft.Colors.BLUE_400)
+    
+    fav_list = ft.ListView(spacing=5, expand=True)
+
+    # --- ANDROID DOM AMNESIA FIX: AUTO-LOAD TEXT ---
+    default_welcome_txt = "Welcome!\n\nTap '✨ 1 Click Generate Content' below to receive your daily Verse, Reflection, and Prayer.\n\nYou can also type your own document here manually and tap 'Save ❤️' to keep it."
+    
+    loaded_text = ""
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, 'r') as f:
+                loaded_text = json.load(f).get("last_devotion_text", "")
+        except Exception: pass
+        
+    if not loaded_text or not loaded_text.strip():
+        loaded_text = default_welcome_txt
 
     text_area = ft.TextField(
         multiline=True, border_radius=10, border_color=ft.Colors.BLUE_600, border_width=1.5,
         width=float('inf'), expand=True,
-        value="Welcome!\n\nTap '✨ 1 Click Generate Content' below to receive your daily Verse, Reflection, and Prayer.\n\nYou can also type your own document here manually and tap 'Save ❤️' to keep it."
+        value=loaded_text
     )
+    
     fav_text_area = ft.TextField(
         multiline=True, read_only=True, border_radius=10, border_color=ft.Colors.BLUE_600, border_width=1.5,
         width=float('inf'), expand=True, 
         value="Select a favorite document to read here..."
     )
-    
-    fav_list = ft.ListView(spacing=5, expand=True)
     
     reading_text = ft.Text(value="", size=16, selectable=True)
     reading_column = ft.Column([reading_text], scroll="hidden", expand=True)
@@ -1012,6 +1026,7 @@ def main(page: ft.Page):
     )
     text_wrapper = ft.Column([text_area, reading_container], expand=True, spacing=0)
     
+    # --- UI UPDATE: TALLER TEXT BOX FOR GEN TAB ---
     text_container_gen = ft.Container(content=text_wrapper, height=380, width=float('inf'), expand=False)
     text_container_fav = ft.Container(content=fav_text_area, height=380, width=float('inf'), expand=False)
 
@@ -1367,9 +1382,54 @@ def main(page: ft.Page):
                 reading_column.update()
             except Exception: pass
 
+    def save_app_settings(e=None):
+        try:
+            data = {}
+            if os.path.exists(CONFIG_FILE):
+                try:
+                    with open(CONFIG_FILE, 'r') as f: data = json.load(f)
+                except Exception: pass
+            
+            if hasattr(dd_format, 'value'): data["format"] = dd_format.value
+            if hasattr(dd_style, 'value'): data["style"] = dd_style.value
+            if hasattr(dd_version, 'value'): data["version"] = dd_version.value
+            if hasattr(dd_theme, 'value'): data["theme"] = dd_theme.value
+            if hasattr(dd_length, 'value'): data["length"] = dd_length.value
+            if hasattr(dd_lang, 'value'): data["lang"] = dd_lang.value
+            if hasattr(dd_duration, 'value'): data["duration"] = dd_duration.value
+            if hasattr(dd_font, 'value'): data["font"] = dd_font.value
+            if hasattr(dd_size, 'value'): data["size"] = dd_size.value
+            if hasattr(dd_model, 'value'): data["model"] = dd_model.value
+            if hasattr(dd_backend, 'value'): data["backend"] = dd_backend.value
+            if hasattr(dd_tts_engine, 'value'): data["tts_engine"] = dd_tts_engine.value
+            if hasattr(tf_tiktok_session, 'value'): data["tiktok_session_id"] = tf_tiktok_session.value.strip()
+            if hasattr(dd_tiktok_voice, 'value'): data["tiktok_voice"] = dd_tiktok_voice.value
+            if hasattr(tf_voicebox_url, 'value'): data["voicebox_url"] = tf_voicebox_url.value.strip()
+            if hasattr(tf_voicebox_preset, 'value'): data["voicebox_preset"] = tf_voicebox_preset.value.strip()
+            if hasattr(tf_fish_url, 'value'): data["fish_url"] = tf_fish_url.value.strip()
+            if hasattr(chk_autoplay, 'value'): data["autoplay"] = chk_autoplay.value
+            if hasattr(chk_force_cache, 'value'): data["force_cache"] = chk_force_cache.value
+            if hasattr(scroll_speed_slider, 'value'): data["scroll_speed"] = scroll_speed_slider.value
+            if hasattr(tf_cache_dir, 'value'): data["audio_cache_dir"] = tf_cache_dir.value
+            
+            # --- DOM AMNESIA FIX: SAVE THE TEXT SO IT SURVIVES ANDROID BACKGROUNDING ---
+            try:
+                if 'text_area' in locals() or 'text_area' in globals() or hasattr(text_area, 'value'):
+                    current_val = text_area.value
+                    if current_val and not current_val.startswith("Welcome!"):
+                        data["last_devotion_text"] = current_val
+                    elif "last_devotion_text" in data:
+                        pass # Keep the old text if it was accidentally wiped during a session disconnect
+            except Exception: pass
+            
+            with open(CONFIG_FILE, 'w') as f: json.dump(data, f, indent=4)
+        except Exception as err:
+            pass # We silently pass here so Flet doesn't crash on app shutdown!
+
     def on_text_changed(e):
         app_state["last_audio_path"] = ""
         app_state["last_audio_hash"] = ""
+        save_app_settings() # Instantly save typed changes to config.json!
 
     def browse_cache_dir(e):
         if is_android():
@@ -1656,40 +1716,6 @@ def main(page: ft.Page):
                 
         threading.Thread(target=worker, daemon=True).start()
 
-    def save_app_settings(e=None):
-        try:
-            data = {}
-            if os.path.exists(CONFIG_FILE):
-                try:
-                    with open(CONFIG_FILE, 'r') as f: data = json.load(f)
-                except Exception: pass
-            
-            data["format"] = dd_format.value
-            data["style"] = dd_style.value
-            data["version"] = dd_version.value
-            data["theme"] = dd_theme.value
-            data["length"] = dd_length.value
-            data["lang"] = dd_lang.value
-            data["duration"] = dd_duration.value
-            data["font"] = dd_font.value
-            data["size"] = dd_size.value
-            data["model"] = dd_model.value
-            data["backend"] = dd_backend.value
-            data["tts_engine"] = dd_tts_engine.value
-            data["tiktok_session_id"] = (tf_tiktok_session.value or "").strip()
-            data["tiktok_voice"] = dd_tiktok_voice.value
-            data["voicebox_url"] = (tf_voicebox_url.value or "").strip()
-            data["voicebox_preset"] = (tf_voicebox_preset.value or "").strip()
-            data["fish_url"] = (tf_fish_url.value or "").strip()
-            data["autoplay"] = chk_autoplay.value
-            data["force_cache"] = chk_force_cache.value
-            data["scroll_speed"] = scroll_speed_slider.value
-            data["audio_cache_dir"] = getattr(tf_cache_dir, 'value', "")
-            
-            with open(CONFIG_FILE, 'w') as f: json.dump(data, f, indent=4)
-        except Exception as err:
-            show_snack(f"Failed to auto-save settings: {err}", ft.Colors.RED)
-            
     def handle_window_event(e):
         if e.data == "close":
             save_app_settings()
@@ -1794,13 +1820,13 @@ def main(page: ft.Page):
                         if success:
                             text_area.value = format_and_clean(new_content)
                             reading_text.value = text_area.value 
+                            save_app_settings() # Auto-Save!
                             show_snack("Verse translated successfully!", ft.Colors.GREEN)
                             
                             try: 
                                 text_area.update()
                                 reading_text.update()
                                 reading_column.update()
-                                text_wrapper.update()
                                 page.update()
                             except Exception: pass
                             
@@ -1842,13 +1868,13 @@ def main(page: ft.Page):
                     if success:
                         text_area.value = format_and_clean(content)
                         reading_text.value = text_area.value
+                        save_app_settings() # Auto-Save!
                         show_snack("Content generated successfully!", ft.Colors.GREEN)
                         
                         try: 
                             text_area.update()
                             reading_text.update()
                             reading_column.update()
-                            text_wrapper.update()
                             page.update() 
                         except Exception: pass
                         
@@ -1904,13 +1930,13 @@ def main(page: ft.Page):
                     if success:
                         text_area.value = format_and_clean(new_content)
                         reading_text.value = text_area.value
+                        save_app_settings() # Auto-Save!
                         show_snack("Content revised successfully!", ft.Colors.GREEN)
                         
                         try: 
                             text_area.update()
                             reading_text.update()
                             reading_column.update()
-                            text_wrapper.update()
                             page.update()
                         except Exception: pass
                         
@@ -1966,13 +1992,13 @@ def main(page: ft.Page):
                     if success:
                         text_area.value = content.strip() + "\n\n---\n\n" + qa_content.strip()
                         reading_text.value = text_area.value
+                        save_app_settings() # Auto-Save!
                         show_snack("Q&A generated successfully!", ft.Colors.GREEN)
                         
                         try: 
                             text_area.update()
                             reading_text.update()
                             reading_column.update()
-                            text_wrapper.update()
                             page.update()
                         except Exception: pass
                     else:
@@ -2263,18 +2289,15 @@ def main(page: ft.Page):
                                 top_rec_btn.text = "⏹️ Stop Rec"
                                 reading_container.border = None
                             
-                            text_area.visible = False
+                            # DOM SWAP FIX: Completely un-mount text_area from the parent so it stays safely tucked away!
+                            text_container_gen.content = reading_container
                             reading_text.value = "\n" + content + "\n\n\n\n"
-                            reading_container.visible = True
                             
                             try: 
                                 tts_btn.update()
                                 top_play_btn.update()
                                 top_rec_btn.update()
-                                reading_text.update()
-                                reading_column.update()
-                                reading_container.update()
-                                text_area.update()
+                                text_container_gen.update()
                                 page.update() 
                                 
                                 async def _reset_scroll():
@@ -2473,14 +2496,13 @@ def main(page: ft.Page):
                                     if current_fullscreen_mode[0] == "none":
                                         reading_container.border = ft.border.all(1.5, ft.Colors.BLUE_600)
                                         
-                                    reading_container.visible = False
-                                    text_area.visible = True
+                                    # REVERT DOM CONTAINER SWAP
+                                    text_container_gen.content = text_area
                                     try: 
                                         tts_btn.update()
                                         top_play_btn.update()
                                         top_rec_btn.update()
-                                        reading_container.update()
-                                        text_area.update()
+                                        text_container_gen.update()
                                         refresh_fav_list()
                                         page.update()
                                     except: pass
@@ -2975,6 +2997,15 @@ def main(page: ft.Page):
     fs_landscape_btn = ft.TextButton("📺 Land", tooltip="Landscape Mode", on_click=lambda e: set_fullscreen("landscape"), style=ft.ButtonStyle(color="#60A5FA"))
     fs_exit_btn = ft.TextButton("↙️ Exit", tooltip="Exit Fullscreen", on_click=lambda e: set_fullscreen("none"), style=ft.ButtonStyle(color="#60A5FA"), visible=False)
     
+    # --- MOBILE FULLSCREEN FIX ---
+    # Hide window resize buttons on phones (since phones rotate physically). 
+    # Clicking these on mobile breaks the viewport!
+    try:
+        if page.platform == ft.PagePlatform.ANDROID or page.platform == ft.PagePlatform.IOS:
+            fs_portrait_btn.visible = False
+            fs_landscape_btn.visible = False
+    except: pass
+    
     fs_row = ft.Row([fs_portrait_btn, fs_landscape_btn, fs_exit_btn], spacing=0)
     header_gen = ft.Row([header_gen_left, fs_row], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
     
@@ -3085,7 +3116,7 @@ def main(page: ft.Page):
     on_backend_change(None)
 
     title_row = ft.Row(
-        [ft.Container(width=45), ft.Text("Edu's Daily Devotional", size=22, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER), ft.TextButton("🔑", on_click=open_keys_dialog, width=45, height=45, tooltip="API Keys", style=ft.ButtonStyle(padding=0))],
+        [ft.Container(width=45), ft.Text("Edu's Daily Devotional", size=20, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER), ft.TextButton("🔑", on_click=open_keys_dialog, width=45, height=45, tooltip="API Keys", style=ft.ButtonStyle(padding=0))],
         alignment=ft.MainAxisAlignment.SPACE_BETWEEN
     )
 
