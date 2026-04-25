@@ -901,12 +901,26 @@ def format_and_clean(text):
     for h in headers:
         text = re.sub(r'([^\n])\s*(' + h + r')', r'\1\n\n\2', text)
         text = re.sub(r'(' + h + r')\s*([^\n])', r'\1\n\2', text)
-        if lines: return lines[0][:37] + "..." if len(lines[0]) > 40 else lines[0]
-        return "Saved Document"
+    text = re.sub(r'([^\n])\s*(Question \d+:)', r'\1\n\n\2', text)
+    text = re.sub(r'(Question \d+:)\s*([^\n])', r'\1\n\2', text)
+    return text.strip()
+
+def extract_title(content):
+    lines = [line.strip() for line in content.split('\n') if line.strip() and not line.startswith('---')]
+    for i, line in enumerate(lines):
+        if line.startswith("Date:"): return lines[i+1][:37] + "..." if i + 1 < len(lines) and len(lines[i+1]) > 40 else lines[i+1] if i + 1 < len(lines) else ""
+        elif line.startswith("Title:") or line.startswith("Story Title:") or line.startswith("Poem Title:"):
+            v = line.split(":", 1)[-1].strip()
+            return v[:37] + "..." if len(v) > 40 else v
+        elif line.startswith("Verse:") or line.startswith("Main Text:") or line.startswith("Passage:") or line.startswith("Focus Verse:") or line.startswith("S - Scripture:") or line.startswith("The Verse:") or line.startswith("Focus Promise:") or line.startswith("The Anchor Verse:") or line.startswith("Breath Verse:"):
+            if i + 1 < len(lines):
+                v = lines[i+1]
+                return v[:37] + "..." if len(v) > 40 else v
+    if lines: return lines[0][:37] + "..." if len(lines[0]) > 40 else lines[0]
+    return "Saved Document"
 
 def set_window_size(page, w, h):
-    # --- THE MOBILE VIEWPORT FIX ---
-    # Never force fixed pixel dimensions on phones! It causes the screen to clip, zoom, and shift.
+    if is_android(): return
     try:
         if page.platform == ft.PagePlatform.ANDROID or page.platform == ft.PagePlatform.IOS:
             return
@@ -925,11 +939,13 @@ def main(page: ft.Page):
     page.title = "Daily Devotional"
     
     # --- THE SAFE AREA / NOTCH FIX ---
-    # Prevents the UI from rendering underneath the Android top status bar/camera hole!
-    try:
-        if page.platform == ft.PagePlatform.ANDROID or page.platform == ft.PagePlatform.IOS:
-            page.padding = ft.padding.only(top=40, left=5, right=5, bottom=10)
-    except: pass
+    if is_android():
+        page.padding = ft.padding.only(top=40, left=5, right=5, bottom=10)
+    else:
+        try:
+            if page.platform == ft.PagePlatform.ANDROID or page.platform == ft.PagePlatform.IOS:
+                page.padding = ft.padding.only(top=40, left=5, right=5, bottom=10)
+        except: pass
     
     # UI State Dictionary (Bulletproof alternative to globals and page.session)
     app_state = {
@@ -1078,11 +1094,13 @@ def main(page: ft.Page):
             try: page.update()
             except: pass
 
+    # --- RED ERROR BLOCK AVOIDANCE ---
+    # We do NOT append AudioControl to overlay on boot. It will only be appended when "Read Aloud" is clicked.
+    # This guarantees the app opens safely even if the `flet-audio` package is missing from `requirements.txt`
     if AudioControl and not PYGAME_AVAILABLE:
         audio_player = AudioControl(autoplay=False)
         try: audio_player.on_state_changed = on_audio_state_changed
         except Exception: pass
-        page.overlay.append(audio_player)
     else: audio_player = None
 
     groq_backend = GroqBackend(CONFIG_FILE)
@@ -2262,7 +2280,14 @@ def main(page: ft.Page):
                             reading_text.font_family = family
                             try: reading_text.style = ft.TextStyle(size=current_f_size, font_family=family) if family else ft.TextStyle(size=current_f_size)
                             except: pass
-                            
+
+                            # --- SAFE AUDIO INJECTION ---
+                            # Append to overlay right before playback so it doesn't crash the launch!
+                            if audio_player and audio_player not in page.overlay:
+                                page.overlay.append(audio_player)
+                                try: page.update()
+                                except: pass
+
                             if record_video and is_cached:
                                 status_msg = "🔴 Recording Video (Audio from Cache)..."
                             elif record_video and is_silent_playback:
@@ -2289,7 +2314,6 @@ def main(page: ft.Page):
                                 top_rec_btn.text = "⏹️ Stop Rec"
                                 reading_container.border = None
                             
-                            # DOM SWAP FIX: Completely un-mount text_area from the parent so it stays safely tucked away!
                             text_container_gen.content = reading_container
                             reading_text.value = "\n" + content + "\n\n\n\n"
                             
@@ -2401,6 +2425,11 @@ def main(page: ft.Page):
                                 pygame.mixer.music.load(output_path)
                                 pygame.mixer.music.play()
                             elif audio_player:
+                                if is_android():
+                                    def _warn_audio():
+                                        show_snack("If a red block appears, add 'flet-audio' to requirements.txt!", ft.Colors.ORANGE)
+                                    if hasattr(page, 'call_after'): page.call_after(_warn_audio)
+                                    else: _warn_audio()
                                 audio_player.src = target_play_path
                                 audio_player.update()
                                 audio_player.play()
@@ -2496,7 +2525,6 @@ def main(page: ft.Page):
                                     if current_fullscreen_mode[0] == "none":
                                         reading_container.border = ft.border.all(1.5, ft.Colors.BLUE_600)
                                         
-                                    # REVERT DOM CONTAINER SWAP
                                     text_container_gen.content = text_area
                                     try: 
                                         tts_btn.update()
@@ -2998,13 +3026,16 @@ def main(page: ft.Page):
     fs_exit_btn = ft.TextButton("↙️ Exit", tooltip="Exit Fullscreen", on_click=lambda e: set_fullscreen("none"), style=ft.ButtonStyle(color="#60A5FA"), visible=False)
     
     # --- MOBILE FULLSCREEN FIX ---
-    # Hide window resize buttons on phones (since phones rotate physically). 
-    # Clicking these on mobile breaks the viewport!
-    try:
-        if page.platform == ft.PagePlatform.ANDROID or page.platform == ft.PagePlatform.IOS:
-            fs_portrait_btn.visible = False
-            fs_landscape_btn.visible = False
-    except: pass
+    if is_android():
+        fs_portrait_btn.visible = False
+        fs_landscape_btn.visible = False
+        fs_exit_btn.visible = False
+    else:
+        try:
+            if page.platform == ft.PagePlatform.ANDROID or page.platform == ft.PagePlatform.IOS:
+                fs_portrait_btn.visible = False
+                fs_landscape_btn.visible = False
+        except: pass
     
     fs_row = ft.Row([fs_portrait_btn, fs_landscape_btn, fs_exit_btn], spacing=0)
     header_gen = ft.Row([header_gen_left, fs_row], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
@@ -3063,7 +3094,9 @@ def main(page: ft.Page):
 
     def set_fullscreen(mode):
         current_fullscreen_mode[0] = mode
-        if mode == "none":
+        if is_android():
+            pass
+        elif mode == "none":
             is_fullscreen[0] = False
             set_window_size(page, 450, 850)
             
@@ -3095,15 +3128,16 @@ def main(page: ft.Page):
             
             fs_portrait_btn.visible = False
             fs_landscape_btn.visible = False
-            fs_exit_btn.visible = True
+            if not is_android(): fs_exit_btn.visible = True
         else:
             generator_tab_content.scroll = "hidden"
             text_container_gen.height = 380
             text_container_gen.expand = False
             tab_view_container.padding = 10
             
-            fs_portrait_btn.visible = True
-            fs_landscape_btn.visible = True
+            if not is_android():
+                fs_portrait_btn.visible = True
+                fs_landscape_btn.visible = True
             fs_exit_btn.visible = False
             
         page.update()
