@@ -71,6 +71,11 @@ except ImportError as e:
         sys.exit(1)
 
 # --- CROSS-PLATFORM AUDIO COMPATIBILITY ---
+# --- FLET BUILD ANALYZER HINT ---
+# This forces the 'flet build apk' compiler to bundle the audio plugin natively!
+if False:
+    import flet_audio
+
 try:
     import pygame
     PYGAME_AVAILABLE = True
@@ -81,8 +86,8 @@ try:
     import flet_audio as fta
     AudioControl = fta.Audio
 except ImportError:
-    try: AudioControl = ft.Audio
-    except AttributeError: AudioControl = None
+    # Removed the ft.Audio fallback trap! This completely prevents the red split screen.
+    AudioControl = None
 
 # --- VIDEO RECORDING LIBRARIES (PC ONLY) ---
 try:
@@ -3025,18 +3030,6 @@ def main(page: ft.Page):
     fs_landscape_btn = ft.TextButton("📺 Land", tooltip="Landscape Mode", on_click=lambda e: set_fullscreen("landscape"), style=ft.ButtonStyle(color="#60A5FA"))
     fs_exit_btn = ft.TextButton("↙️ Exit", tooltip="Exit Fullscreen", on_click=lambda e: set_fullscreen("none"), style=ft.ButtonStyle(color="#60A5FA"), visible=False)
     
-    # --- MOBILE FULLSCREEN FIX ---
-    if is_android():
-        fs_portrait_btn.visible = False
-        fs_landscape_btn.visible = False
-        fs_exit_btn.visible = False
-    else:
-        try:
-            if page.platform == ft.PagePlatform.ANDROID or page.platform == ft.PagePlatform.IOS:
-                fs_portrait_btn.visible = False
-                fs_landscape_btn.visible = False
-        except: pass
-    
     fs_row = ft.Row([fs_portrait_btn, fs_landscape_btn, fs_exit_btn], spacing=0)
     header_gen = ft.Row([header_gen_left, fs_row], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
     
@@ -3128,16 +3121,15 @@ def main(page: ft.Page):
             
             fs_portrait_btn.visible = False
             fs_landscape_btn.visible = False
-            if not is_android(): fs_exit_btn.visible = True
+            fs_exit_btn.visible = True
         else:
             generator_tab_content.scroll = "hidden"
             text_container_gen.height = 380
             text_container_gen.expand = False
             tab_view_container.padding = 10
             
-            if not is_android():
-                fs_portrait_btn.visible = True
-                fs_landscape_btn.visible = True
+            fs_portrait_btn.visible = True
+            fs_landscape_btn.visible = True
             fs_exit_btn.visible = False
             
         page.update()
