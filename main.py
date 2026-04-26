@@ -1244,8 +1244,15 @@ def main(page: ft.Page):
             backup_field = ft.TextField(value=backup_str, multiline=True, read_only=True, min_lines=4, max_lines=8, label="Raw Backup Code:")
             
             def copy_backup(e):
-                page.set_clipboard(backup_str)
-                show_snack("Backup code copied to clipboard!", ft.Colors.GREEN)
+                try:
+                    if hasattr(page, 'set_clipboard'):
+                        page.set_clipboard(backup_str)
+                    else:
+                        import pyperclip
+                        pyperclip.copy(backup_str)
+                    show_snack("Backup code copied to clipboard!", ft.Colors.GREEN)
+                except Exception:
+                    show_snack("Auto-copy unavailable. Please manually select and copy the text.", ft.Colors.ORANGE)
 
             dlg = ft.AlertDialog(
                 title=ft.Text("Backup & Sync Data"),
@@ -2719,15 +2726,14 @@ def main(page: ft.Page):
 
     def copy_to_clipboard(e):
         try:
-            page.set_clipboard(text_area.value)
-            show_snack("Copied to clipboard!", ft.Colors.GREEN)
-        except Exception:
-            try:
+            if hasattr(page, 'set_clipboard'):
+                page.set_clipboard(text_area.value)
+            else:
                 import pyperclip
                 pyperclip.copy(text_area.value)
-                show_snack("Copied to clipboard!", ft.Colors.GREEN)
-            except Exception as ex: 
-                show_snack("Auto-copy unavailable. Please long-press text to copy.", ft.Colors.ORANGE)
+            show_snack("Copied to clipboard!", ft.Colors.GREEN)
+        except Exception:
+            show_snack("Auto-copy unavailable. Please long-press text to copy.", ft.Colors.ORANGE)
 
     def on_record_clicked(e):
         if is_android():
