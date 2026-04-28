@@ -11,7 +11,6 @@ import requests
 import base64
 import urllib.parse
 import threading
-import wave
 import inspect
 import asyncio
 import shutil
@@ -53,7 +52,7 @@ except ImportError as e:
             messagebox.showinfo("Installing Dependencies", "Required libraries (like 'flet' and 'requests') are missing on this PC.\n\nDownloading and installing them automatically. This will take a minute. Please wait...")
             temp_root.update()
         except Exception:
-            pass # Failsafe if Tkinter is broken on the new PC
+            pass
             
         try:
             import subprocess
@@ -71,11 +70,6 @@ except ImportError as e:
         sys.exit(1)
 
 # --- CROSS-PLATFORM AUDIO COMPATIBILITY ---
-# --- FLET BUILD ANALYZER HINT ---
-# This forces the 'flet build apk' compiler to bundle the audio plugin natively!
-if False:
-    import flet_audio
-
 try:
     import pygame
     PYGAME_AVAILABLE = True
@@ -83,10 +77,10 @@ except ImportError:
     PYGAME_AVAILABLE = False
 
 try:
+    # Explicit import to ensure Flet compiler sees the audio plugin
     import flet_audio as fta
     AudioControl = fta.Audio
 except ImportError:
-    # Removed the ft.Audio fallback trap! This completely prevents the red split screen.
     AudioControl = None
 
 # --- VIDEO RECORDING LIBRARIES (PC ONLY) ---
@@ -94,15 +88,13 @@ try:
     import mss
     import cv2
     import numpy as np
-    import imageio_ffmpeg  # Direct FFmpeg access, bypassing MoviePy bugs!
+    import imageio_ffmpeg
     VIDEO_EXPORT_AVAILABLE = True
 except ImportError as e:
-    print(f"Video Export Disabled: {e}")
     VIDEO_EXPORT_AVAILABLE = False
 
 # --- EXACT AUDIO DURATION EXTRACTOR ---
 def get_audio_duration(file_path, fallback_text):
-    """Calculates exact audio duration for precise Teleprompter scrolling."""
     if not file_path or not os.path.exists(file_path):
         return len(fallback_text) / 15.0
 
@@ -954,7 +946,7 @@ def main(page: ft.Page):
                 page.padding = ft.padding.only(top=40, left=5, right=5, bottom=10)
         except: pass
     
-    # UI State Dictionary (Bulletproof alternative to globals and page.session)
+    # UI State Dictionary
     app_state = {
         "last_audio_path": "",
         "last_audio_hash": "",
@@ -979,12 +971,11 @@ def main(page: ft.Page):
     selected_fav_idx = [None]
     
     # --- THE DARK THEME FIX ---
-    # We must explicitly hard-lock it back to Dark Mode!
     page.theme_mode = ft.ThemeMode.DARK
     page.bgcolor = "#121212"
 
     # ==========================================
-    # PRE-DECLARE UI ELEMENTS TO PREVENT NAME ERRORS
+    # PRE-DECLARE UI ELEMENTS
     # ==========================================
     top_play_btn = ft.TextButton("▶️", tooltip="Play / Stop Audio")
     top_rec_btn = ft.TextButton("⏺️ Rec", tooltip="Record Screen to MP4", style=ft.ButtonStyle(color=ft.Colors.RED_400))
@@ -1016,7 +1007,6 @@ def main(page: ft.Page):
     
     fav_list = ft.ListView(spacing=5, expand=True)
 
-    # --- ANDROID DOM AMNESIA FIX: AUTO-LOAD TEXT ---
     default_welcome_txt = "Welcome!\n\nTap '✨ 1 Click Generate Content' below to receive your daily Verse, Reflection, and Prayer.\n\nYou can also type your own document here manually and tap 'Save ❤️' to keep it."
     
     loaded_text = ""
@@ -1029,7 +1019,6 @@ def main(page: ft.Page):
     if not loaded_text or not loaded_text.strip():
         loaded_text = default_welcome_txt
 
-    # THE LAYOUT FIX: Both the text_area and reading_text MUST be fully visible components natively.
     text_area = ft.TextField(
         multiline=True, border_radius=10, border_color=ft.Colors.BLUE_600, border_width=1.5,
         width=float('inf'), expand=True,
@@ -1042,7 +1031,6 @@ def main(page: ft.Page):
         value="Select a favorite document to read here..."
     )
     
-    # Text specifically needs explicit WHITE color to prevent background-blending issues
     reading_text = ft.Text(value="", size=16, selectable=True, color=ft.Colors.WHITE)
     reading_column = ft.Column([reading_text], scroll="hidden", expand=True)
     reading_container = ft.Container(
@@ -1050,8 +1038,6 @@ def main(page: ft.Page):
         padding=ft.padding.only(left=20, right=20, top=15, bottom=15), expand=True
     )
     
-    # THE CONTAINER SWAP FIX: 
-    # Do not use `ft.Column` with visibility toggles. Use a single container and physically swap its `content`.
     text_container_gen = ft.Container(content=text_area, height=380, width=float('inf'), expand=False)
     text_container_fav = ft.Container(content=fav_text_area, height=380, width=float('inf'), expand=False)
 
@@ -1091,11 +1077,9 @@ def main(page: ft.Page):
             tts_btn.style = ft.ButtonStyle(bgcolor="#0284C7", color=ft.Colors.WHITE, shape=ft.RoundedRectangleBorder(radius=8))
             top_play_btn.text = "▶️"
             
-            # Remove border cleanly on natural stop
             if current_fullscreen_mode[0] == "none":
                 reading_container.border = ft.border.all(1.5, ft.Colors.BLUE_600)
                 
-            # SAFELY SWAP BACK TO TEXT EDITOR
             text_container_gen.content = text_area
             
             if is_video_recording[0]:
@@ -1106,13 +1090,13 @@ def main(page: ft.Page):
                 page.update()
             except: pass
 
-    # --- RED ERROR BLOCK AVOIDANCE ---
-    # We do NOT append AudioControl to overlay on boot. It will only be appended when "Read Aloud" is clicked.
+    # Initialize Audio Player ONLY if it imported safely
     if AudioControl and not PYGAME_AVAILABLE:
         audio_player = AudioControl(autoplay=False)
         try: audio_player.on_state_changed = on_audio_state_changed
         except Exception: pass
-    else: audio_player = None
+    else: 
+        audio_player = None
 
     groq_backend = GroqBackend(CONFIG_FILE)
     gemini_backend = GeminiBackend(CONFIG_FILE)
@@ -1291,7 +1275,6 @@ def main(page: ft.Page):
             chk_settings.on_change = generate_backup_str
             chk_favorites.on_change = generate_backup_str
             
-            # Generate initial state
             generate_backup_str()
 
             dlg = ft.AlertDialog(
@@ -1457,7 +1440,6 @@ def main(page: ft.Page):
 
     # --- SAFE ASYNC RUNNER FOR AUTO-SCROLL ---
     def safe_fire_scroll(delta_val):
-        """Bulletproof coroutine handler to prevent 'never awaited' and 'TimeoutException' Flet bugs."""
         async def _execute_scroll():
             try:
                 res = reading_column.scroll_to(offset=delta_val, duration=500)
@@ -1507,24 +1489,23 @@ def main(page: ft.Page):
             if hasattr(scroll_speed_slider, 'value'): data["scroll_speed"] = scroll_speed_slider.value
             if hasattr(tf_cache_dir, 'value'): data["audio_cache_dir"] = tf_cache_dir.value
             
-            # --- DOM AMNESIA FIX: SAVE THE TEXT SO IT SURVIVES ANDROID BACKGROUNDING ---
             try:
                 if 'text_area' in locals() or 'text_area' in globals() or hasattr(text_area, 'value'):
                     current_val = text_area.value
                     if current_val and not current_val.startswith("Welcome!"):
                         data["last_devotion_text"] = current_val
                     elif "last_devotion_text" in data:
-                        pass # Keep the old text if it was accidentally wiped during a session disconnect
+                        pass
             except Exception: pass
             
             with open(CONFIG_FILE, 'w') as f: json.dump(data, f, indent=4)
         except Exception as err:
-            pass # We silently pass here so Flet doesn't crash on app shutdown!
+            pass
 
     def on_text_changed(e):
         app_state["last_audio_path"] = ""
         app_state["last_audio_hash"] = ""
-        save_app_settings() # Instantly save typed changes to config.json!
+        save_app_settings() 
 
     def browse_cache_dir(e):
         if is_android():
@@ -2195,7 +2176,7 @@ def main(page: ft.Page):
         def worker():
             try:
                 for f in os.listdir(DATA_DIR):
-                    if f.startswith("tts_output_") or f.startswith("temp_video_") or f.startswith("temp_final_"):
+                    if f.startswith("tts_output_") or f.startswith("play_") or f.startswith("temp_video_") or f.startswith("temp_final_"):
                         try: os.remove(os.path.join(DATA_DIR, f))
                         except: pass
                 
@@ -2333,6 +2314,21 @@ def main(page: ft.Page):
                         temp_avi_path = os.path.join(DATA_DIR, f"temp_video_{int(time.time())}.avi")
                         temp_mp4_path = os.path.join(DATA_DIR, "temp_final_video.mp4")
                         
+                        # --- MOBILE AUDIO FIX: RELATIVE ASSET SANDBOX ---
+                        # We must force the audio file into Flet's secure 'assets_dir' (DATA_DIR) 
+                        # and use a relative filename, or Android security blocks playback!
+                        if not is_silent_playback:
+                            ext = ".mp3" if output_path.endswith(".mp3") else ".wav"
+                            play_target_filename = f"play_{int(my_render_id)}{ext}"
+                            play_target_path = os.path.join(DATA_DIR, play_target_filename)
+                            
+                            try:
+                                shutil.copy2(output_path, play_target_path)
+                            except Exception as e:
+                                print(f"Error sandboxing audio: {e}")
+                                play_target_path = output_path 
+                                play_target_filename = os.path.basename(output_path)
+
                         is_processing[0] = False 
                         
                         def ui_updates():
@@ -2345,10 +2341,24 @@ def main(page: ft.Page):
                             except: pass
 
                             # --- SAFE AUDIO INJECTION ---
-                            if audio_player and audio_player not in page.overlay:
-                                page.overlay.append(audio_player)
-                                try: page.update()
-                                except: pass
+                            if not is_silent_playback:
+                                if PYGAME_AVAILABLE:
+                                    if not pygame.mixer.get_init(): pygame.mixer.init()
+                                    pygame.mixer.music.load(play_target_path)
+                                    pygame.mixer.music.play()
+                                elif audio_player:
+                                    # Tell the frontend to load from its internal web server relative path
+                                    audio_player.src = play_target_filename
+                                    if audio_player not in page.overlay:
+                                        page.overlay.append(audio_player)
+                                    try: 
+                                        page.update()
+                                        audio_player.update()
+                                        audio_player.play()
+                                    except Exception as e:
+                                        show_snack(f"Audio playback error: {e}", ft.Colors.RED)
+                                else:
+                                    show_snack("Cannot play audio: Ensure 'flet-audio' is in requirements.txt on GitHub!", ft.Colors.RED)
 
                             if record_video and is_cached:
                                 status_msg = "🔴 Recording Video (Audio from Cache)..."
@@ -2483,30 +2493,6 @@ def main(page: ft.Page):
                                     is_video_recording[0] = False
                                     
                             threading.Thread(target=frame_grabber_task, daemon=True).start()
-
-                        if not is_silent_playback:
-                            target_play_path = output_path if is_android() else output_file
-
-                            if PYGAME_AVAILABLE:
-                                if not pygame.mixer.get_init(): pygame.mixer.init()
-                                pygame.mixer.music.load(output_path)
-                                pygame.mixer.music.play()
-                            elif audio_player:
-                                if is_android():
-                                    def _warn_audio():
-                                        show_snack("If a red block appears, add 'flet-audio' to requirements.txt!", ft.Colors.ORANGE)
-                                    if hasattr(page, 'call_after'): page.call_after(_warn_audio)
-                                    else: _warn_audio()
-                                audio_player.src = target_play_path
-                                audio_player.update()
-                                audio_player.play()
-                            else:
-                                def _err():
-                                    show_snack("Audio component missing! Ensure 'flet-audio' is installed.", ft.Colors.RED)
-                                    page.update()
-                                if hasattr(page, 'call_after'): page.call_after(_err)
-                                else: _err()
-                                return
                             
                         is_audio_playing[0] = True
                         
@@ -2949,7 +2935,7 @@ def main(page: ft.Page):
         refresh_keys_list()
         show_dialog(dlg)
 
-    # --- WIRE UP ALL BUTTON CALLBACKS (Prevents NameErrors!) ---
+    # --- WIRE UP ALL BUTTON CALLBACKS ---
     text_area.on_change = on_text_changed
     top_play_btn.on_click = on_play_tts
     top_rec_btn.on_click = on_record_clicked
@@ -3080,7 +3066,7 @@ def main(page: ft.Page):
     ], expand=True)
 
     # =======================================================
-    # FULLSCREEN & TAB NAVIGATION LOGIC (CRASH FIX)
+    # FULLSCREEN & TAB NAVIGATION LOGIC
     # =======================================================
     
     header_gen_left = ft.Row([
@@ -3093,8 +3079,6 @@ def main(page: ft.Page):
     fs_landscape_btn = ft.TextButton("📺 Land", tooltip="Landscape Mode", on_click=lambda e: set_fullscreen("landscape"), style=ft.ButtonStyle(color="#60A5FA"))
     fs_exit_btn = ft.TextButton("↙️ Exit", tooltip="Exit Fullscreen", on_click=lambda e: set_fullscreen("none"), style=ft.ButtonStyle(color="#60A5FA"), visible=False)
     
-    # --- FULLSCREEN BUTTON FIX ---
-    # These are forced to always be visible, even on Android, so you can hide the menus!
     fs_portrait_btn.visible = True
     fs_landscape_btn.visible = True
     fs_exit_btn.visible = False
@@ -3102,10 +3086,8 @@ def main(page: ft.Page):
     fs_row = ft.Row([fs_portrait_btn, fs_landscape_btn, fs_exit_btn], spacing=0)
     header_gen = ft.Row([header_gen_left, fs_row], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
     
-    # Assembly of the actual Gen tab
     generator_tab_content = ft.Column([header_gen, text_container_gen, ft.Divider(color=ft.Colors.TRANSPARENT, height=5), gen_actions_container], expand=True, scroll="hidden", spacing=0) 
 
-    # THE FLUTTER LAYOUT CRASH FIX: Replaced 'ft.Stack' with a fully compliant 'ft.Column'
     tab_view_container = ft.Container(
         content=ft.Column([
             generator_tab_content,
@@ -3205,8 +3187,6 @@ def main(page: ft.Page):
         page.update()
 
     switch_to_tab("gen")
-    
-    # Run initializations that require UI elements to be mapped
     refresh_fav_list()
     update_font()
     on_backend_change(None)
@@ -3217,7 +3197,6 @@ def main(page: ft.Page):
     )
 
     status_row = ft.Row([pr, status_text], alignment=ft.MainAxisAlignment.CENTER)
-
     page.add(title_row, status_row, tabs_row_container, tab_view_container)
 
 if __name__ == "__main__":
