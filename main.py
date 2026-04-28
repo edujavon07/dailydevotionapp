@@ -192,7 +192,7 @@ class BaseBackend:
             base_prompt += f"SPECIAL INSTRUCTION FROM USER: {custom_instruction}\nCRITICAL: Choose completely unique Bible verses that fit this instruction. DO NOT repeat verses across days.\n\n"
         else:
             if theme.lower() == "random":
-                themes = ["hope", "faith", "God's love", "courage", "patience", "forgiveness", "joy", "peace", "grace", "mercy", "strength", "healing", "trusting God", "wisdom", "compassion", "humility", "perseverance", "gratitude", "kindness", "obedience", "overcoming fear", "guidance", "comfort in sorrow", "God's promises", "light in darkness", "fellowship", "worship", "praising God", "The Holy Spirit", "creation", "redemption", "serving others"]
+                themes = ["hope", "faith", "God's love", "courage", "patience", "forgiveness", "joy", "peace", "grace", "mercy", "strength", "healing", "trusting God", "wisdom", "compassion", "humility", "perseverance", "gratitude", "kindness", "obedience", "overcoming fear", "guidance", "comfort in sorrow", "God's promises", "light in darkness", "fellowship", "worship", "praising God", "The Holy Spirit", "creation", "redemption", "serving Others"]
                 selected_theme = random.choice(themes)
                 base_prompt += f"Focus all content on the theme of '{selected_theme}'. CRITICAL INSTRUCTION: You MUST select unique verses for each day. Try selecting from different books of the Bible. DO NOT use commonly quoted verses like John 3:16, Jeremiah 29:11, Proverbs 3:5-6, or Philippians 4:13. Find hidden gems.\n\n"
             else:
@@ -619,7 +619,7 @@ def generate_tiktok_audio(text, voice_id, session_id, output_path):
     except Exception as e: return False, str(e)
 
 
-def generate_voicebox_audio(text, server_url, voice_preset, output_path, status_callback=None, cancel_callback=None):
+def generate_voicebox_audio(text, server_url, voice_preset, selected_engine, output_path, status_callback=None, cancel_callback=None):
     """
     FULLY UNCHUNKED VOICEBOX ENGINE
     Sends 100% of the text in one massive payload. No stitching, no loops.
@@ -628,7 +628,7 @@ def generate_voicebox_audio(text, server_url, voice_preset, output_path, status_
     try:
         base_url = (server_url or "").strip().rstrip('/')
         actual_profile_id = (voice_preset or "").strip() if voice_preset else "default"
-        actual_engine = None
+        actual_engine = selected_engine if selected_engine != "Auto" else None
         
         try:
             profiles_req = requests.get(f"{base_url}/profiles", timeout=5)
@@ -644,7 +644,9 @@ def generate_voicebox_audio(text, server_url, voice_preset, output_path, status_
                 for p in items:
                     if str(p.get("name", "")).lower() == str(actual_profile_id).lower() or str(p.get("id", "")) == str(actual_profile_id):
                         actual_profile_id = p.get("id", actual_profile_id)
-                        actual_engine = p.get("engine")
+                        # Only auto-detect if the user left it on Auto
+                        if selected_engine == "Auto" and p.get("engine"):
+                            actual_engine = p.get("engine")
                         break
         except Exception: pass 
 
@@ -1027,6 +1029,7 @@ def main(page: ft.Page):
     if not loaded_text or not loaded_text.strip():
         loaded_text = default_welcome_txt
 
+    # THE LAYOUT FIX: Both the text_area and reading_text MUST be fully visible components natively.
     text_area = ft.TextField(
         multiline=True, border_radius=10, border_color=ft.Colors.BLUE_600, border_width=1.5,
         width=float('inf'), expand=True,
@@ -1039,22 +1042,24 @@ def main(page: ft.Page):
         value="Select a favorite document to read here..."
     )
     
-    reading_text = ft.Text(value="", size=16, selectable=True)
+    # Text specifically needs explicit WHITE color to prevent background-blending issues
+    reading_text = ft.Text(value="", size=16, selectable=True, color=ft.Colors.WHITE)
     reading_column = ft.Column([reading_text], scroll="hidden", expand=True)
     reading_container = ft.Container(
         content=reading_column, border_radius=10, border=ft.border.all(1.5, ft.Colors.BLUE_600),
-        padding=ft.padding.only(left=20, right=20, top=15, bottom=15), expand=True, visible=False
+        padding=ft.padding.only(left=20, right=20, top=15, bottom=15), expand=True
     )
-    text_wrapper = ft.Column([text_area, reading_container], expand=True, spacing=0)
     
-    # --- UI UPDATE: TALLER TEXT BOX FOR GEN TAB ---
-    text_container_gen = ft.Container(content=text_wrapper, height=380, width=float('inf'), expand=False)
+    # THE CONTAINER SWAP FIX: 
+    # Do not use `ft.Column` with visibility toggles. Use a single container and physically swap its `content`.
+    text_container_gen = ft.Container(content=text_area, height=380, width=float('inf'), expand=False)
     text_container_fav = ft.Container(content=fav_text_area, height=380, width=float('inf'), expand=False)
 
     tf_tiktok_session = ft.TextField(label="TikTok Session ID", password=True)
     dd_tiktok_voice = ft.Dropdown(label="TikTok Voice Preset", options=[ft.dropdown.Option(x) for x in TIKTOK_VOICES.keys()])
     tf_voicebox_url = ft.TextField(label="Voicebox PC URL (e.g. http://192.168.1.X:17493)")
     tf_voicebox_preset = ft.TextField(label="Voicebox Preset (Optional)")
+    dd_voicebox_engine = ft.Dropdown(label="Voicebox Engine", options=[ft.dropdown.Option(x) for x in ["Auto", "kokoro", "q", "xtts", "piper", "styletts2"]])
     tf_fish_url = ft.TextField(label="Fish Speech Server (Gradio URL or HF Space)")
     tf_cache_dir = ft.TextField(label="Offline Audio Cache Folder (For Backup/Favorites)", expand=True)
     
@@ -1090,18 +1095,19 @@ def main(page: ft.Page):
             if current_fullscreen_mode[0] == "none":
                 reading_container.border = ft.border.all(1.5, ft.Colors.BLUE_600)
                 
-            reading_container.visible = False
-            text_area.visible = True
+            # SAFELY SWAP BACK TO TEXT EDITOR
+            text_container_gen.content = text_area
             
             if is_video_recording[0]:
                 is_video_recording[0] = False
             
-            try: page.update()
+            try: 
+                text_container_gen.update()
+                page.update()
             except: pass
 
     # --- RED ERROR BLOCK AVOIDANCE ---
     # We do NOT append AudioControl to overlay on boot. It will only be appended when "Read Aloud" is clicked.
-    # This guarantees the app opens safely even if the `flet-audio` package is missing from `requirements.txt`
     if AudioControl and not PYGAME_AVAILABLE:
         audio_player = AudioControl(autoplay=False)
         try: audio_player.on_state_changed = on_audio_state_changed
@@ -1151,6 +1157,7 @@ def main(page: ft.Page):
     dd_tiktok_voice.value = app_settings.get("tiktok_voice", "US Female 2 (Jessie)")
     tf_voicebox_url.value = app_settings.get("voicebox_url", "")
     tf_voicebox_preset.value = app_settings.get("voicebox_preset", "")
+    dd_voicebox_engine.value = app_settings.get("voicebox_engine", "Auto")
     tf_fish_url.value = app_settings.get("fish_url", "http://127.0.0.1:8080")
     tf_cache_dir.value = app_settings.get("audio_cache_dir", os.path.join(DATA_DIR, "audio_cache"))
     
@@ -1206,58 +1213,95 @@ def main(page: ft.Page):
 
     def perform_backup(e):
         try:
-            data_to_save = {
-                "favorites": favorites,
-                "groq_keys": groq_backend.keys,
-                "gemini_keys": gemini_backend.keys,
-                "openai_keys": openai_backend.keys,
-                "tiktok_session_id": (tf_tiktok_session.value or "").strip(),
-                "tiktok_voice": dd_tiktok_voice.value,
-                "voicebox_url": (tf_voicebox_url.value or "").strip(),
-                "voicebox_preset": (tf_voicebox_preset.value or "").strip(),
-                "fish_url": (tf_fish_url.value or "").strip(),
-                "tts_engine": dd_tts_engine.value,
-                "autoplay": chk_autoplay.value,
-                "force_cache": chk_force_cache.value,
-                "scroll_speed": scroll_speed_slider.value,
-                "elevenlabs_presets": app_settings.get("elevenlabs_presets", {}),
-                "elevenlabs_active_preset": getattr(dd_elevenlabs_preset, 'value', ""),
-                "fish_presets": app_settings.get("fish_presets", {}),
-                "fish_active_preset": getattr(dd_fish_preset, 'value', ""),
-                "audio_cache_dir": getattr(tf_cache_dir, 'value', "")
-            }
-            backup_str = json.dumps(data_to_save)
-            
-            # --- THE SYNC FIX: FILE-BASED AUTO BACKUP ---
-            cache_dir = getattr(tf_cache_dir, 'value', "").strip()
-            if not cache_dir: cache_dir = DATA_DIR
-            os.makedirs(cache_dir, exist_ok=True)
-            backup_file_path = os.path.join(cache_dir, "Devotional_Backup.txt")
-            
-            try:
-                with open(backup_file_path, "w", encoding="utf-8") as bf:
-                    bf.write(backup_str)
-                file_status = f"✅ Auto-saved to:\n{backup_file_path}"
-            except Exception as ex:
-                file_status = f"⚠️ Could not save file: {ex}"
+            chk_settings = ft.Checkbox(label="Include Settings & API Keys", value=True)
+            chk_favorites = ft.Checkbox(label="Include Favorites", value=True)
+            backup_field = ft.TextField(value="", multiline=True, read_only=True, min_lines=4, max_lines=8, label="Raw Backup Code:")
+            file_status_text = ft.Text("", size=11, color=ft.Colors.GREEN_400)
 
-            backup_field = ft.TextField(value=backup_str, multiline=True, read_only=True, min_lines=4, max_lines=8, label="Raw Backup Code:")
-            
+            def generate_backup_str(e=None):
+                data_to_save = {}
+                if chk_favorites.value:
+                    data_to_save["favorites"] = favorites
+                
+                if chk_settings.value:
+                    data_to_save.update({
+                        "groq_keys": groq_backend.keys,
+                        "gemini_keys": gemini_backend.keys,
+                        "openai_keys": openai_backend.keys,
+                        "tiktok_session_id": (tf_tiktok_session.value or "").strip(),
+                        "tiktok_voice": dd_tiktok_voice.value,
+                        "voicebox_url": (tf_voicebox_url.value or "").strip(),
+                        "voicebox_preset": (tf_voicebox_preset.value or "").strip(),
+                        "voicebox_engine": getattr(dd_voicebox_engine, 'value', "Auto"),
+                        "fish_url": (tf_fish_url.value or "").strip(),
+                        "tts_engine": dd_tts_engine.value,
+                        "autoplay": chk_autoplay.value,
+                        "force_cache": chk_force_cache.value,
+                        "scroll_speed": scroll_speed_slider.value,
+                        "elevenlabs_presets": app_settings.get("elevenlabs_presets", {}),
+                        "elevenlabs_active_preset": getattr(dd_elevenlabs_preset, 'value', ""),
+                        "fish_presets": app_settings.get("fish_presets", {}),
+                        "fish_active_preset": getattr(dd_fish_preset, 'value', ""),
+                        "audio_cache_dir": getattr(tf_cache_dir, 'value', "")
+                    })
+                
+                if not data_to_save:
+                    backup_field.value = ""
+                    file_status_text.value = "⚠️ Nothing selected to backup."
+                    try:
+                        backup_field.update()
+                        file_status_text.update()
+                    except: pass
+                    return
+
+                backup_str = json.dumps(data_to_save)
+                backup_field.value = backup_str
+                
+                cache_dir = getattr(tf_cache_dir, 'value', "").strip()
+                if not cache_dir: cache_dir = DATA_DIR
+                os.makedirs(cache_dir, exist_ok=True)
+                backup_file_path = os.path.join(cache_dir, "Devotional_Backup.txt")
+                
+                try:
+                    with open(backup_file_path, "w", encoding="utf-8") as bf:
+                        bf.write(backup_str)
+                    file_status_text.value = f"✅ Auto-saved to:\n{backup_file_path}"
+                except Exception as ex:
+                    file_status_text.value = f"⚠️ Could not save file: {ex}"
+                
+                try:
+                    backup_field.update()
+                    file_status_text.update()
+                except: pass
+
             def copy_backup(e):
+                if not backup_field.value:
+                    show_snack("Nothing to copy!", ft.Colors.ORANGE)
+                    return
                 try:
                     if hasattr(page, 'set_clipboard'):
-                        page.set_clipboard(backup_str)
+                        page.set_clipboard(backup_field.value)
                     else:
                         import pyperclip
-                        pyperclip.copy(backup_str)
+                        pyperclip.copy(backup_field.value)
                     show_snack("Backup code copied to clipboard!", ft.Colors.GREEN)
                 except Exception:
                     show_snack("Auto-copy unavailable. Please manually select and copy the text.", ft.Colors.ORANGE)
 
+            chk_settings.on_change = generate_backup_str
+            chk_favorites.on_change = generate_backup_str
+            
+            # Generate initial state
+            generate_backup_str()
+
             dlg = ft.AlertDialog(
                 title=ft.Text("Backup & Sync Data"),
                 content=ft.Column([
-                    ft.Text(file_status, size=11, color=ft.Colors.GREEN_400),
+                    ft.Text("Select what to backup:", weight="bold", size=12),
+                    chk_settings,
+                    chk_favorites,
+                    ft.Divider(height=5),
+                    file_status_text,
                     ft.Text("To sync across devices, copy this file via Google Drive/USB to your other device's Cache folder.\n\nOr manually copy the code below:", size=11, color=ft.Colors.GREY_300),
                     backup_field
                 ], tight=True),
@@ -1270,43 +1314,59 @@ def main(page: ft.Page):
         except Exception as ex: show_snack(f"Failed to create backup: {ex}", ft.Colors.RED)
 
     def perform_restore(e):
+        chk_restore_settings = ft.Checkbox(label="Restore Settings & API Keys", value=True)
+        chk_restore_favorites = ft.Checkbox(label="Restore Favorites", value=True)
         restore_field = ft.TextField(label="Paste backup code here...", multiline=True, min_lines=4, max_lines=8)
         
         def process_data(restored_data):
-            if "favorites" in restored_data:
+            if not chk_restore_settings.value and not chk_restore_favorites.value:
+                show_snack("Please select what to restore!", ft.Colors.ORANGE)
+                return
+
+            restored_count = 0
+            if chk_restore_favorites.value and "favorites" in restored_data:
                 favorites.clear()
                 favorites.extend(restored_data["favorites"])
                 save_favorites()
                 refresh_fav_list()
-            if "groq_keys" in restored_data: 
-                groq_backend.keys = restored_data["groq_keys"]
-                groq_backend.save_keys(groq_backend.keys)
-            if "gemini_keys" in restored_data: 
-                gemini_backend.keys = restored_data["gemini_keys"]
-                gemini_backend.save_keys(gemini_backend.keys)
-            if "openai_keys" in restored_data: 
-                openai_backend.keys = restored_data["openai_keys"]
-                openai_backend.save_keys(openai_backend.keys)
-            if "tiktok_session_id" in restored_data: tf_tiktok_session.value = restored_data["tiktok_session_id"]
-            if "tiktok_voice" in restored_data: dd_tiktok_voice.value = restored_data["tiktok_voice"]
-            if "voicebox_url" in restored_data: tf_voicebox_url.value = restored_data["voicebox_url"]
-            if "voicebox_preset" in restored_data: tf_voicebox_preset.value = restored_data["voicebox_preset"]
-            if "fish_url" in restored_data: tf_fish_url.value = restored_data["fish_url"]
-            if "tts_engine" in restored_data: dd_tts_engine.value = restored_data["tts_engine"]
-            if "autoplay" in restored_data: chk_autoplay.value = restored_data["autoplay"]
-            if "force_cache" in restored_data: chk_force_cache.value = restored_data["force_cache"]
-            if "scroll_speed" in restored_data: scroll_speed_slider.value = restored_data["scroll_speed"]
-            if "elevenlabs_presets" in restored_data: app_settings["elevenlabs_presets"] = restored_data["elevenlabs_presets"]
-            if "elevenlabs_active_preset" in restored_data: dd_elevenlabs_preset.value = restored_data["elevenlabs_active_preset"]
-            if "fish_presets" in restored_data: app_settings["fish_presets"] = restored_data["fish_presets"]
-            if "fish_active_preset" in restored_data: dd_fish_preset.value = restored_data["fish_active_preset"]
-            if "audio_cache_dir" in restored_data: tf_cache_dir.value = restored_data["audio_cache_dir"]
+                restored_count += 1
             
-            save_app_settings()
-            refresh_el_dropdown()
-            refresh_fish_dropdown()
+            if chk_restore_settings.value:
+                if "groq_keys" in restored_data: 
+                    groq_backend.keys = restored_data["groq_keys"]
+                    groq_backend.save_keys(groq_backend.keys)
+                if "gemini_keys" in restored_data: 
+                    gemini_backend.keys = restored_data["gemini_keys"]
+                    gemini_backend.save_keys(gemini_backend.keys)
+                if "openai_keys" in restored_data: 
+                    openai_backend.keys = restored_data["openai_keys"]
+                    openai_backend.save_keys(openai_backend.keys)
+                if "tiktok_session_id" in restored_data: tf_tiktok_session.value = restored_data["tiktok_session_id"]
+                if "tiktok_voice" in restored_data: dd_tiktok_voice.value = restored_data["tiktok_voice"]
+                if "voicebox_url" in restored_data: tf_voicebox_url.value = restored_data["voicebox_url"]
+                if "voicebox_preset" in restored_data: tf_voicebox_preset.value = restored_data["voicebox_preset"]
+                if "voicebox_engine" in restored_data: dd_voicebox_engine.value = restored_data["voicebox_engine"]
+                if "fish_url" in restored_data: tf_fish_url.value = restored_data["fish_url"]
+                if "tts_engine" in restored_data: dd_tts_engine.value = restored_data["tts_engine"]
+                if "autoplay" in restored_data: chk_autoplay.value = restored_data["autoplay"]
+                if "force_cache" in restored_data: chk_force_cache.value = restored_data["force_cache"]
+                if "scroll_speed" in restored_data: scroll_speed_slider.value = restored_data["scroll_speed"]
+                if "elevenlabs_presets" in restored_data: app_settings["elevenlabs_presets"] = restored_data["elevenlabs_presets"]
+                if "elevenlabs_active_preset" in restored_data: dd_elevenlabs_preset.value = restored_data["elevenlabs_active_preset"]
+                if "fish_presets" in restored_data: app_settings["fish_presets"] = restored_data["fish_presets"]
+                if "fish_active_preset" in restored_data: dd_fish_preset.value = restored_data["fish_active_preset"]
+                if "audio_cache_dir" in restored_data: tf_cache_dir.value = restored_data["audio_cache_dir"]
+                
+                save_app_settings()
+                refresh_el_dropdown()
+                refresh_fish_dropdown()
+                restored_count += 1
+            
             hide_dialog(dlg)
-            show_snack("Data synced & restored successfully!", ft.Colors.GREEN)
+            if restored_count > 0:
+                show_snack("Selected data synced & restored successfully!", ft.Colors.GREEN)
+            else:
+                show_snack("No matching data found in backup.", ft.Colors.ORANGE)
             page.update()
 
         def process_restore_text(e):
@@ -1336,6 +1396,10 @@ def main(page: ft.Page):
         dlg = ft.AlertDialog(
             title=ft.Text("Restore / Sync Data"),
             content=ft.Column([
+                ft.Text("Select what to restore:", weight="bold", size=12),
+                chk_restore_settings,
+                chk_restore_favorites,
+                ft.Divider(height=5),
                 ft.Text("Load from 'Devotional_Backup.txt' in your Cache Folder:", size=11, color=ft.Colors.GREY_300),
                 ft.TextButton("📂 Sync from File", on_click=process_restore_file, style=ft.ButtonStyle(bgcolor=ft.Colors.BLUE_700, color=ft.Colors.WHITE)),
                 ft.Divider(),
@@ -1436,6 +1500,7 @@ def main(page: ft.Page):
             if hasattr(dd_tiktok_voice, 'value'): data["tiktok_voice"] = dd_tiktok_voice.value
             if hasattr(tf_voicebox_url, 'value'): data["voicebox_url"] = tf_voicebox_url.value.strip()
             if hasattr(tf_voicebox_preset, 'value'): data["voicebox_preset"] = tf_voicebox_preset.value.strip()
+            if hasattr(dd_voicebox_engine, 'value'): data["voicebox_engine"] = dd_voicebox_engine.value
             if hasattr(tf_fish_url, 'value'): data["fish_url"] = tf_fish_url.value.strip()
             if hasattr(chk_autoplay, 'value'): data["autoplay"] = chk_autoplay.value
             if hasattr(chk_force_cache, 'value'): data["force_cache"] = chk_force_cache.value
@@ -1760,7 +1825,7 @@ def main(page: ft.Page):
             
     def on_simple_setting_change(e): save_app_settings()
         
-    for dd in [dd_format, dd_style, dd_theme, dd_length, dd_lang, dd_duration, dd_tts_engine, chk_autoplay, chk_force_cache, tf_tiktok_session, dd_tiktok_voice, tf_voicebox_url, tf_voicebox_preset, dd_elevenlabs_preset, dd_fish_preset, tf_fish_url]:
+    for dd in [dd_format, dd_style, dd_theme, dd_length, dd_lang, dd_duration, dd_tts_engine, chk_autoplay, chk_force_cache, tf_tiktok_session, dd_tiktok_voice, tf_voicebox_url, tf_voicebox_preset, dd_voicebox_engine, dd_elevenlabs_preset, dd_fish_preset, tf_fish_url]:
         dd.on_change = save_app_settings
 
     def update_font(e=None):
@@ -1791,7 +1856,8 @@ def main(page: ft.Page):
                 # Force everything to repaint completely
                 text_area.update()
                 fav_text_area.update()
-                reading_text.update()
+                try: reading_text.update()
+                except: pass
                 page.update()
                 show_snack(f"Font updated to {dd_font.value} (Size {size})", ft.Colors.GREEN)
             except Exception: pass
@@ -1855,8 +1921,6 @@ def main(page: ft.Page):
                             
                             try: 
                                 text_area.update()
-                                reading_text.update()
-                                reading_column.update()
                                 page.update()
                             except Exception: pass
                             
@@ -1903,8 +1967,6 @@ def main(page: ft.Page):
                         
                         try: 
                             text_area.update()
-                            reading_text.update()
-                            reading_column.update()
                             page.update() 
                         except Exception: pass
                         
@@ -1965,8 +2027,6 @@ def main(page: ft.Page):
                         
                         try: 
                             text_area.update()
-                            reading_text.update()
-                            reading_column.update()
                             page.update()
                         except Exception: pass
                         
@@ -2027,8 +2087,6 @@ def main(page: ft.Page):
                         
                         try: 
                             text_area.update()
-                            reading_text.update()
-                            reading_column.update()
                             page.update()
                         except Exception: pass
                     else:
@@ -2077,14 +2135,14 @@ def main(page: ft.Page):
                 if current_fullscreen_mode[0] == "none":
                     reading_container.border = ft.border.all(1.5, ft.Colors.BLUE_600)
                     
-                reading_container.visible = False
-                text_area.visible = True
+                # SAFELY SWAP BACK TO TEXT EDITOR
+                text_container_gen.content = text_area
+                
                 try:
                     tts_btn.update()
                     top_play_btn.update()
                     top_rec_btn.update()
-                    reading_container.update()
-                    text_area.update()
+                    text_container_gen.update()
                 except Exception: pass
                 show_snack("Audio stopped.", ft.Colors.ORANGE)
                 page.update()
@@ -2104,6 +2162,7 @@ def main(page: ft.Page):
         voice_id = TIKTOK_VOICES.get(dd_tiktok_voice.value, "en_us_002")
         server_url = (tf_voicebox_url.value or "").strip()
         preset = (tf_voicebox_preset.value or "").strip()
+        vb_engine = dd_voicebox_engine.value
         
         el_presets = app_settings.get("elevenlabs_presets", {})
         el_active_preset = getattr(dd_elevenlabs_preset, 'value', "")
@@ -2127,7 +2186,7 @@ def main(page: ft.Page):
             
         set_loading(True, f"Generating {engine} Audio...", is_rendering_audio=True)
         
-        fingerprint = f"{content}_{engine}_{session_id}_{voice_id}_{server_url}_{preset}_{el_active_preset}_{fish_active_preset}_{fish_url}"
+        fingerprint = f"{content}_{engine}_{session_id}_{voice_id}_{server_url}_{preset}_{vb_engine}_{el_active_preset}_{fish_active_preset}_{fish_url}"
         content_hash = hashlib.md5(fingerprint.encode('utf-8')).hexdigest()
         
         pure_text_hash = hashlib.md5(content.encode('utf-8')).hexdigest()
@@ -2189,14 +2248,6 @@ def main(page: ft.Page):
                         success, result, output_path = True, "Loaded from cache", cached_wav
                         output_file = os.path.basename(cached_wav)
                         is_cached = True
-                    elif os.path.exists(pure_mp3):
-                        success, result, output_path = True, "Loaded from pure cache", pure_mp3
-                        output_file = os.path.basename(pure_mp3)
-                        is_cached = True
-                    elif os.path.exists(pure_wav):
-                        success, result, output_path = True, "Loaded from pure cache", pure_wav
-                        output_file = os.path.basename(pure_wav)
-                        is_cached = True
                     else:
                         if engine == "TikTok API":
                             success, result = generate_tiktok_audio(content, voice_id, session_id, output_path)
@@ -2213,7 +2264,7 @@ def main(page: ft.Page):
                             output_path = output_path.replace(".mp3", ".wav")
                             
                             cancel_check = lambda: app_state.get("cancel_render") or app_state.get("current_render_id") != my_render_id
-                            success, result = generate_voicebox_audio(content, server_url, preset, output_path, status_callback=_update_status, cancel_callback=cancel_check)
+                            success, result = generate_voicebox_audio(content, server_url, preset, vb_engine, output_path, status_callback=_update_status, cancel_callback=cancel_check)
                         elif engine == "Fish Speech":
                             def _update_status(msg):
                                 if app_state.get("cancel_render") or app_state.get("current_render_id") != my_render_id: return
@@ -2294,7 +2345,6 @@ def main(page: ft.Page):
                             except: pass
 
                             # --- SAFE AUDIO INJECTION ---
-                            # Append to overlay right before playback so it doesn't crash the launch!
                             if audio_player and audio_player not in page.overlay:
                                 page.overlay.append(audio_player)
                                 try: page.update()
@@ -2326,8 +2376,13 @@ def main(page: ft.Page):
                                 top_rec_btn.text = "⏹️ Stop Rec"
                                 reading_container.border = None
                             
-                            text_container_gen.content = reading_container
+                            # --- THE DOM SHATTER FIX ---
+                            # Swap content instead of using visibility toggles on expanding rows
                             reading_text.value = "\n" + content + "\n\n\n\n"
+                            try: reading_text.update()
+                            except: pass
+                            
+                            text_container_gen.content = reading_container
                             
                             try: 
                                 tts_btn.update()
@@ -2976,7 +3031,9 @@ def main(page: ft.Page):
         ft.Divider(),
         ft.Text("Voicebox Configuration", weight=ft.FontWeight.BOLD, size=16, color=ft.Colors.GREEN_400),
         ft.ResponsiveRow([
-            ft.Column([tf_voicebox_url], col={"sm": 6, "xs": 6}), ft.Column([tf_voicebox_preset], col={"sm": 6, "xs": 6}),
+            ft.Column([tf_voicebox_url], col={"sm": 6, "xs": 12}), 
+            ft.Column([tf_voicebox_preset], col={"sm": 6, "xs": 6}),
+            ft.Column([dd_voicebox_engine], col={"sm": 6, "xs": 6}), 
             ft.Column([test_vb_btn], col={"sm": 12, "xs": 12}),
         ]),
         ft.Divider(),
@@ -3023,7 +3080,7 @@ def main(page: ft.Page):
     ], expand=True)
 
     # =======================================================
-    # FULLSCREEN & TAB NAVIGATION LOGIC (STACK FIX)
+    # FULLSCREEN & TAB NAVIGATION LOGIC (CRASH FIX)
     # =======================================================
     
     header_gen_left = ft.Row([
@@ -3036,15 +3093,21 @@ def main(page: ft.Page):
     fs_landscape_btn = ft.TextButton("📺 Land", tooltip="Landscape Mode", on_click=lambda e: set_fullscreen("landscape"), style=ft.ButtonStyle(color="#60A5FA"))
     fs_exit_btn = ft.TextButton("↙️ Exit", tooltip="Exit Fullscreen", on_click=lambda e: set_fullscreen("none"), style=ft.ButtonStyle(color="#60A5FA"), visible=False)
     
+    # --- FULLSCREEN BUTTON FIX ---
+    # These are forced to always be visible, even on Android, so you can hide the menus!
+    fs_portrait_btn.visible = True
+    fs_landscape_btn.visible = True
+    fs_exit_btn.visible = False
+    
     fs_row = ft.Row([fs_portrait_btn, fs_landscape_btn, fs_exit_btn], spacing=0)
     header_gen = ft.Row([header_gen_left, fs_row], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
     
     # Assembly of the actual Gen tab
     generator_tab_content = ft.Column([header_gen, text_container_gen, ft.Divider(color=ft.Colors.TRANSPARENT, height=5), gen_actions_container], expand=True, scroll="hidden", spacing=0) 
 
-    # THE DOM DETACHMENT FIX: Use a Stack to keep all tabs loaded in memory so they never reset!
+    # THE FLUTTER LAYOUT CRASH FIX: Replaced 'ft.Stack' with a fully compliant 'ft.Column'
     tab_view_container = ft.Container(
-        content=ft.Stack([
+        content=ft.Column([
             generator_tab_content,
             settings_tab_content,
             voice_tab_content,
@@ -3093,11 +3156,10 @@ def main(page: ft.Page):
 
     def set_fullscreen(mode):
         current_fullscreen_mode[0] = mode
-        if is_android():
-            pass
-        elif mode == "none":
+        if mode == "none":
             is_fullscreen[0] = False
-            set_window_size(page, 450, 850)
+            if not is_android():
+                set_window_size(page, 450, 850)
             
             if not is_video_recording[0]:
                 reading_container.border = ft.border.all(1.5, ft.Colors.BLUE_600)
@@ -3105,12 +3167,14 @@ def main(page: ft.Page):
             reading_container.padding = ft.padding.only(left=20, right=20, top=15, bottom=15)
         elif mode == "portrait":
             is_fullscreen[0] = True
-            set_window_size(page, 450, 800)
+            if not is_android():
+                set_window_size(page, 450, 800)
             reading_container.border = None
             reading_container.padding = ft.padding.only(left=25, right=25, top=35, bottom=35)
         elif mode == "landscape":
             is_fullscreen[0] = True
-            set_window_size(page, 800, 450)
+            if not is_android():
+                set_window_size(page, 800, 450)
             reading_container.border = None
             reading_container.padding = ft.padding.only(left=40, right=40, top=35, bottom=35)
             
