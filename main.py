@@ -1,47 +1,21 @@
 import os
 import sys
-import json
-import random
-import re
-import warnings
-import traceback
-import datetime
-import time
-import requests
-import base64
-import urllib.parse
-import threading
-import inspect
-import asyncio
-import shutil
 import platform
-import hashlib
-
-# Suppress annoying Flet deprecation warnings from the console
-warnings.filterwarnings("ignore", category=DeprecationWarning)
+import subprocess
 
 # ==========================================
-# 1. APP ENVIRONMENT SETUP & SAFE IMPORTS
+# 1. APP ENVIRONMENT SETUP & DEPENDENCIES
 # ==========================================
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.join(BASE_DIR, "data")
-CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
-FAVORITES_FILE = os.path.join(DATA_DIR, "favorites.json")
-
-# Ensure the data directory exists for saving files safely
-os.makedirs(DATA_DIR, exist_ok=True)
-
-# OS Detector Helper
 def is_android():
     return hasattr(sys, 'getandroidapilevel') or 'android' in sys.platform.lower()
 
-# --- SAFE FLET IMPORT WITH AUTO-INSTALLER ---
-try:
-    import flet as ft
-    import requests
-except ImportError as e:
-    print(f"Missing Library Error: {e}")
-    if not is_android():
+# If running on PC, ensure dependencies are installed BEFORE we hit the raw imports
+if not is_android():
+    try:
+        import flet
+        import flet_audio
+        import requests
+    except ImportError:
         print("\nAttempting to automatically install required libraries...")
         try:
             import tkinter as tk
@@ -49,39 +23,86 @@ except ImportError as e:
             temp_root = tk.Tk()
             temp_root.withdraw()
             temp_root.attributes('-topmost', True)
-            messagebox.showinfo("Installing Dependencies", "Required libraries (like 'flet' and 'requests') are missing on this PC.\n\nDownloading and installing them automatically. This will take a minute. Please wait...")
+            messagebox.showinfo("Installing Dependencies", "Required libraries are missing on this PC.\n\nDownloading and installing them automatically. This will take a minute. Please wait...")
             temp_root.update()
-        except Exception:
-            pass
-            
+        except: pass
         try:
-            import subprocess
             subprocess.check_call([sys.executable, "-m", "pip", "install", "setuptools", "flet", "requests", "flet-audio", "pygame-ce"])
-            if 'temp_root' in locals():
-                temp_root.destroy()
             print("Installation successful! Launching app...")
-            import flet as ft
-            import requests
         except Exception as ex:
             print(f"\nAuto-install failed: {ex}")
             input("\nPress Enter to close this window...")
             sys.exit(1)
-    else:
-        sys.exit(1)
+
+# ---------------------------------------------------------
+# STRICT, UNCONDITIONAL IMPORTS
+# This guarantees Flet's Android compiler natively bundles the Audio plugin!
+# ---------------------------------------------------------
+import flet as ft
+import flet_audio as fta
+import requests
+import json
+import random
+import re
+import warnings
+import traceback
+import datetime
+import time
+import base64
+import urllib.parse
+import threading
+import inspect
+import asyncio
+import shutil
+import hashlib
+import http.server
+import socketserver
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "data")
+CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
+FAVORITES_FILE = os.path.join(DATA_DIR, "favorites.json")
+
+os.makedirs(DATA_DIR, exist_ok=True)
+
+# =========================================================
+# THE ANDROID AUDIO FIX: LOCALHOST WEB STREAM SERVER
+# Bypasses Flet's read-only asset lock on Android by serving
+# dynamic audio files over a tiny internal HTTP server!
+# =========================================================
+LOCAL_AUDIO_PORT = None
+
+def start_local_server():
+    global LOCAL_AUDIO_PORT
+    class QuietHandler(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, directory=DATA_DIR, **kwargs)
+        def log_message(self, format, *args):
+            pass # Suppress terminal spam
+            
+    for port in range(8888, 8999):
+        try:
+            httpd = socketserver.TCPServer(("127.0.0.1", port), QuietHandler)
+            threading.Thread(target=httpd.serve_forever, daemon=True).start()
+            LOCAL_AUDIO_PORT = port
+            print(f"Local audio stream server running on port {port}")
+            break
+        except OSError:
+            continue
+
+# Boot the tiny server
+start_local_server()
 
 # --- CROSS-PLATFORM AUDIO COMPATIBILITY ---
+AudioControl = fta.Audio
+
 try:
     import pygame
     PYGAME_AVAILABLE = True
 except ImportError:
     PYGAME_AVAILABLE = False
-
-try:
-    # Explicit import to ensure Flet compiler sees the audio plugin
-    import flet_audio as fta
-    AudioControl = fta.Audio
-except ImportError:
-    AudioControl = None
 
 # --- VIDEO RECORDING LIBRARIES (PC ONLY) ---
 try:
@@ -90,7 +111,7 @@ try:
     import numpy as np
     import imageio_ffmpeg
     VIDEO_EXPORT_AVAILABLE = True
-except ImportError as e:
+except ImportError:
     VIDEO_EXPORT_AVAILABLE = False
 
 # --- EXACT AUDIO DURATION EXTRACTOR ---
@@ -348,7 +369,6 @@ class OpenAICompatibleBackend(BaseBackend):
             data = {"model": model.strip(), "messages": [{"role": "user", "content": prompt}], "temperature": temperature}
 
             try:
-                import requests
                 response = requests.post(self.endpoint, headers=headers, json=data, timeout=25 if self.service_name != "lmstudio" else 300)
                 
                 if response.status_code == 200:
@@ -461,7 +481,6 @@ class GeminiBackend(BaseBackend):
             }
 
             try:
-                import requests
                 response = requests.post(url, headers=headers, json=data, timeout=25)
                 if response.status_code == 200:
                     try:
@@ -612,11 +631,6 @@ def generate_tiktok_audio(text, voice_id, session_id, output_path):
 
 
 def generate_voicebox_audio(text, server_url, voice_preset, selected_engine, output_path, status_callback=None, cancel_callback=None):
-    """
-    FULLY UNCHUNKED VOICEBOX ENGINE
-    Sends 100% of the text in one massive payload. No stitching, no loops.
-    Added native cancellation support to instantly stop polling.
-    """
     try:
         base_url = (server_url or "").strip().rstrip('/')
         actual_profile_id = (voice_preset or "").strip() if voice_preset else "default"
@@ -636,7 +650,6 @@ def generate_voicebox_audio(text, server_url, voice_preset, selected_engine, out
                 for p in items:
                     if str(p.get("name", "")).lower() == str(actual_profile_id).lower() or str(p.get("id", "")) == str(actual_profile_id):
                         actual_profile_id = p.get("id", actual_profile_id)
-                        # Only auto-detect if the user left it on Auto
                         if selected_engine == "Auto" and p.get("engine"):
                             actual_engine = p.get("engine")
                         break
@@ -666,7 +679,6 @@ def generate_voicebox_audio(text, server_url, voice_preset, selected_engine, out
         tracker.start()
         
         try:
-            # Submit the ENTIRE script in one massive request (allow 30 mins)
             response = requests.post(endpoint, json=payload, timeout=1800)
             is_waiting[0] = False 
             
@@ -709,7 +721,6 @@ def generate_voicebox_audio(text, server_url, voice_preset, selected_engine, out
                         tracker.start()
                         
                         for attempt in range(900): 
-                            # Check if user clicked cancel during the polling loop!
                             if cancel_callback and cancel_callback():
                                 is_waiting[0] = False
                                 return False, "Canceled by user."
@@ -788,10 +799,6 @@ def generate_elevenlabs_audio(text, presets, start_preset_name, output_path):
     return False, f"ElevenLabs Failed. All presets exhausted or invalid.\n\nLast error:\n{last_error}", start_preset_name
 
 def generate_fish_speech_audio(text, server_url, presets, start_preset_name, output_path, status_callback=None, cancel_callback=None):
-    """
-    FULLY RESTORED RAW API INTEGRATION
-    Connects to http://127.0.0.1:8080/v1/tts directly. No more Gradio errors!
-    """
     if not presets: return False, "No Fish Speech presets found. Please configure them in 'Manage Fish Speech'.", start_preset_name
     if not server_url: return False, "Missing Fish Speech Server URL/Space.", start_preset_name
 
@@ -946,7 +953,6 @@ def main(page: ft.Page):
                 page.padding = ft.padding.only(top=40, left=5, right=5, bottom=10)
         except: pass
     
-    # UI State Dictionary
     app_state = {
         "last_audio_path": "",
         "last_audio_hash": "",
@@ -970,13 +976,9 @@ def main(page: ft.Page):
     current_fullscreen_mode = ["none"]
     selected_fav_idx = [None]
     
-    # --- THE DARK THEME FIX ---
     page.theme_mode = ft.ThemeMode.DARK
     page.bgcolor = "#121212"
 
-    # ==========================================
-    # PRE-DECLARE UI ELEMENTS
-    # ==========================================
     top_play_btn = ft.TextButton("▶️", tooltip="Play / Stop Audio")
     top_rec_btn = ft.TextButton("⏺️ Rec", tooltip="Record Screen to MP4", style=ft.ButtonStyle(color=ft.Colors.RED_400))
     copy_btn = ft.TextButton("📋", tooltip="Copy Text")
@@ -1090,11 +1092,16 @@ def main(page: ft.Page):
                 page.update()
             except: pass
 
-    # Initialize Audio Player ONLY if it imported safely
-    if AudioControl and not PYGAME_AVAILABLE:
+    # =========================================================
+    # THE PRE-INJECTION FIX
+    # Locks the audio player into the UI at the very start 
+    # to guarantee it never crashes the DOM layer on Android!
+    # =========================================================
+    if AudioControl:
         audio_player = AudioControl(autoplay=False)
         try: audio_player.on_state_changed = on_audio_state_changed
         except Exception: pass
+        page.overlay.append(audio_player)
     else: 
         audio_player = None
 
@@ -2116,7 +2123,6 @@ def main(page: ft.Page):
                 if current_fullscreen_mode[0] == "none":
                     reading_container.border = ft.border.all(1.5, ft.Colors.BLUE_600)
                     
-                # SAFELY SWAP BACK TO TEXT EDITOR
                 text_container_gen.content = text_area
                 
                 try:
@@ -2314,20 +2320,15 @@ def main(page: ft.Page):
                         temp_avi_path = os.path.join(DATA_DIR, f"temp_video_{int(time.time())}.avi")
                         temp_mp4_path = os.path.join(DATA_DIR, "temp_final_video.mp4")
                         
-                        # --- MOBILE AUDIO FIX: RELATIVE ASSET SANDBOX ---
-                        # We must force the audio file into Flet's secure 'assets_dir' (DATA_DIR) 
-                        # and use a relative filename, or Android security blocks playback!
+                        # --- MOBILE HTTP STREAMING FIX ---
+                        # Prepares the file to be streamed over localhost
+                        play_target_filename = ""
                         if not is_silent_playback:
                             ext = ".mp3" if output_path.endswith(".mp3") else ".wav"
                             play_target_filename = f"play_{int(my_render_id)}{ext}"
                             play_target_path = os.path.join(DATA_DIR, play_target_filename)
-                            
-                            try:
-                                shutil.copy2(output_path, play_target_path)
-                            except Exception as e:
-                                print(f"Error sandboxing audio: {e}")
-                                play_target_path = output_path 
-                                play_target_filename = os.path.basename(output_path)
+                            try: shutil.copy2(output_path, play_target_path)
+                            except: play_target_filename = os.path.basename(output_path)
 
                         is_processing[0] = False 
                         
@@ -2340,25 +2341,26 @@ def main(page: ft.Page):
                             try: reading_text.style = ft.TextStyle(size=current_f_size, font_family=family) if family else ft.TextStyle(size=current_f_size)
                             except: pass
 
-                            # --- SAFE AUDIO INJECTION ---
+                            # --- HTTP INJECTION ---
                             if not is_silent_playback:
                                 if PYGAME_AVAILABLE:
                                     if not pygame.mixer.get_init(): pygame.mixer.init()
-                                    pygame.mixer.music.load(play_target_path)
+                                    pygame.mixer.music.load(output_path)
                                     pygame.mixer.music.play()
                                 elif audio_player:
-                                    # Tell the frontend to load from its internal web server relative path
-                                    audio_player.src = play_target_filename
-                                    if audio_player not in page.overlay:
-                                        page.overlay.append(audio_player)
                                     try: 
+                                        if LOCAL_AUDIO_PORT:
+                                            audio_player.src = f"http://127.0.0.1:{LOCAL_AUDIO_PORT}/{play_target_filename}"
+                                        else:
+                                            audio_player.src = play_target_filename
+                                            
                                         page.update()
                                         audio_player.update()
                                         audio_player.play()
                                     except Exception as e:
                                         show_snack(f"Audio playback error: {e}", ft.Colors.RED)
                                 else:
-                                    show_snack("Cannot play audio: Ensure 'flet-audio' is in requirements.txt on GitHub!", ft.Colors.RED)
+                                    show_snack("Cannot play audio: Ensure 'flet-audio' is natively bundled in your APK!", ft.Colors.RED)
 
                             if record_video and is_cached:
                                 status_msg = "🔴 Recording Video (Audio from Cache)..."
@@ -2386,7 +2388,6 @@ def main(page: ft.Page):
                                 top_rec_btn.text = "⏹️ Stop Rec"
                                 reading_container.border = None
                             
-                            # --- THE DOM SHATTER FIX ---
                             # Swap content instead of using visibility toggles on expanding rows
                             reading_text.value = "\n" + content + "\n\n\n\n"
                             try: reading_text.update()
