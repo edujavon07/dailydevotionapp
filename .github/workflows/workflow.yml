@@ -31,9 +31,9 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Build the APK (WITH FORCED AUDIO)
+      - name: Build the APK
         run: |
-          flet build apk --project devotional --org com.edu.devotional --include-packages flet_audio
+          flet build apk --project devotional --org com.edu.devotional
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
