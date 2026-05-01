@@ -22,9 +22,15 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install Flet and Dependencies
+      - name: Force Pure Requirements & Install
+        # This deletes the Windows text file and generates a pure Linux one!
         run: |
-          pip install flet requests flet-audio
+          rm -f requirements.txt
+          echo "flet" > requirements.txt
+          echo "requests" >> requirements.txt
+          echo "flet-audio" >> requirements.txt
+          cat requirements.txt
+          pip install -r requirements.txt
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
