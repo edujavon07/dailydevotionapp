@@ -29,15 +29,40 @@ import requests
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.join(BASE_DIR, "data")
+# =========================================================
+# THE ANDROID CRASH FIX: SAFE WRITABLE DIRECTORY
+# Android Flet apps run from a Read-Only zip container!
+# We MUST request a safe AppData or Temp folder to save files.
+# =========================================================
+def get_safe_data_dir():
+    app_folder = "DailyDevotionalData"
+    
+    # 1. Try Windows AppData / Mac Home
+    home_path = os.environ.get("HOME", os.path.expanduser("~"))
+    if platform.system() == "Windows":
+        home_path = os.environ.get("LOCALAPPDATA", home_path)
+        
+    path = os.path.join(home_path, app_folder)
+    try:
+        os.makedirs(path, exist_ok=True)
+        # Test if we can actually write to it
+        test_file = os.path.join(path, ".test")
+        with open(test_file, "w") as f: f.write("1")
+        os.remove(test_file)
+        return path
+    except Exception:
+        # 2. Ultimate Fallback (Guaranteed to work on Android/Linux Flet)
+        import tempfile
+        fallback_path = os.path.join(tempfile.gettempdir(), app_folder)
+        os.makedirs(fallback_path, exist_ok=True)
+        return fallback_path
+
+DATA_DIR = get_safe_data_dir()
 CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
 FAVORITES_FILE = os.path.join(DATA_DIR, "favorites.json")
 
-os.makedirs(DATA_DIR, exist_ok=True)
-
-def is_android():
-    return hasattr(sys, 'getandroidapilevel') or 'android' in sys.platform.lower()
+def is_android_sys():
+    return "android" in platform.platform().lower() or hasattr(sys, 'getandroidapilevel')
 
 # --- CROSS-PLATFORM AUDIO COMPATIBILITY ---
 try:
@@ -326,7 +351,7 @@ class OpenAICompatibleBackend(BaseBackend):
                     except json.JSONDecodeError: api_err = response.text
                     last_error_msg = f"API Error (Status {response.status_code}):\n{api_err}"
                     if response.status_code in [400, 401, 403]:
-                        self.key_index = (self.key_index + 1) % len(self.keys)
+                        self.key_index = (self.key_index + 1) % len(keys_to_try)
                         continue
                     if self.service_name == "lmstudio": return False, last_error_msg
                     break
@@ -868,7 +893,7 @@ def extract_title(content):
     return "Saved Document"
 
 def set_window_size(page, w, h):
-    if is_android(): return
+    if is_android_sys(): return
     try:
         if page.platform == ft.PagePlatform.ANDROID or page.platform == ft.PagePlatform.IOS:
             return
@@ -886,8 +911,7 @@ def set_window_size(page, w, h):
 def main(page: ft.Page):
     page.title = "Daily Devotional"
     
-    # --- THE SAFE AREA / NOTCH FIX ---
-    if is_android():
+    if is_android_sys():
         page.padding = ft.padding.only(top=40, left=5, right=5, bottom=10)
     else:
         try:
@@ -1035,11 +1059,16 @@ def main(page: ft.Page):
             except: pass
 
     # =========================================================
-    # DELAYED AUDIO INJECTION
-    # We DO NOT initialize the audio player on boot.
-    # It will only be appended when needed to prevent crashes!
+    # THE FLET COMPILER FIX
+    # We forcefully instantiate the explicit Audio class
+    # and attach it immediately to satisfy Flutter's UI tree!
     # =========================================================
-    audio_player = None
+    try:
+        audio_player = Audio(autoplay=False)
+        audio_player.on_state_changed = on_audio_state_changed
+        page.overlay.append(audio_player)
+    except Exception:
+        audio_player = None
 
     groq_backend = GroqBackend(CONFIG_FILE)
     gemini_backend = GeminiBackend(CONFIG_FILE)
@@ -1450,7 +1479,7 @@ def main(page: ft.Page):
         save_app_settings() 
 
     def browse_cache_dir(e):
-        if is_android():
+        if is_android_sys():
             android_path = "/storage/emulated/0/Documents/DailyDevotional"
             try:
                 os.makedirs(android_path, exist_ok=True)
@@ -1708,7 +1737,7 @@ def main(page: ft.Page):
     def test_voicebox_conn(e):
         url = (tf_voicebox_url.value or "").strip().rstrip('/')
         if not url: return show_snack("Please enter a Voicebox URL first.", ft.Colors.RED)
-        if is_android() and ("127.0.0.1" in url or "localhost" in url):
+        if is_android_sys() and ("127.0.0.1" in url or "localhost" in url):
             return show_error_dialog("⚠️ You cannot use 127.0.0.1 or localhost on a phone!\n\nThat points to the phone itself. You must use your PC's actual Wi-Fi IP Address (e.g., http://192.168.1.5:17493).")
             
         set_loading(True, "Testing connection...")
@@ -2101,7 +2130,7 @@ def main(page: ft.Page):
         if engine == "ElevenLabs" and not el_presets and not chk_force_cache.value: return show_snack("Missing ElevenLabs Settings! Please click 'Manage ElevenLabs Keys' below.", ft.Colors.RED)
         if engine == "Fish Speech" and not fish_presets and not chk_force_cache.value: return show_snack("Missing Fish Speech Settings! Please configure a preset.", ft.Colors.RED)
             
-        if not chk_force_cache.value and is_android() and engine in ["Local PC Voicebox", "Fish Speech"] and ("127.0.0.1" in server_url or "localhost" in server_url or "127.0.0.1" in fish_url or "localhost" in fish_url):
+        if not chk_force_cache.value and is_android_sys() and engine in ["Local PC Voicebox", "Fish Speech"] and ("127.0.0.1" in server_url or "localhost" in server_url or "127.0.0.1" in fish_url or "localhost" in fish_url):
             return show_error_dialog("⚠️ You cannot use 127.0.0.1 or localhost on a phone!\n\nThat points to the phone itself. You must use your PC's actual Wi-Fi IP Address (e.g., http://192.168.1.5:8080).")
             
         app_state["is_rendering_audio"] = True
@@ -2259,13 +2288,12 @@ def main(page: ft.Page):
                         temp_mp4_path = os.path.join(DATA_DIR, "temp_final_video.mp4")
                         
                         # --- MOBILE AUDIO FIX: BASE64 INJECTION ---
-                        # Instead of relying on Android file permissions or HTTP streams, 
+                        # Instead of relying on Android file permissions, 
                         # we convert the MP3 directly to raw bytes and beam it into the player's memory!
                         b64_audio_data = None
                         if not is_silent_playback:
                             try:
                                 with open(output_path, "rb") as f:
-                                    # Create pure base64 string
                                     b64_audio_data = base64.b64encode(f.read()).decode('utf-8')
                             except Exception as e:
                                 def _err_mem(): show_snack(f"Failed to load audio into memory: {e}", ft.Colors.RED)
@@ -2292,7 +2320,6 @@ def main(page: ft.Page):
                                     pygame.mixer.music.play()
                                 else:
                                     try:
-                                        # Instantiate safely inside the click handler
                                         global audio_player
                                         if 'audio_player' not in globals() or not audio_player:
                                             audio_player = Audio(autoplay=False)
@@ -2301,7 +2328,7 @@ def main(page: ft.Page):
                                             page.update()
                                             
                                         # Clear old local path and inject raw memory bytes!
-                                        audio_player.src = None  
+                                        audio_player.src = ""  
                                         audio_player.src_base64 = b64_audio_data 
                                         
                                         page.update()
@@ -2670,7 +2697,7 @@ def main(page: ft.Page):
             show_snack("Please generate or paste text first to link audio to it.", ft.Colors.ORANGE)
             return
 
-        if is_android():
+        if is_android_sys():
             show_snack("Manual file linking is only supported on PC.", ft.Colors.ORANGE)
             return
 
@@ -2726,7 +2753,7 @@ def main(page: ft.Page):
             show_snack("Auto-copy unavailable. Please long-press text to copy.", ft.Colors.ORANGE)
 
     def on_record_clicked(e):
-        if is_android():
+        if is_android_sys():
             show_snack("Screen recording via Python is only supported on PC. On Mobile, please use your phone's native screen recorder.", ft.Colors.ORANGE)
             return
         if not VIDEO_EXPORT_AVAILABLE:
@@ -2754,3 +2781,404 @@ def main(page: ft.Page):
             pure_hash = hashlib.md5(fav.get("content", "").encode('utf-8')).hexdigest()
             has_cache = os.path.exists(os.path.join(cache_dir, f"{pure_hash}.mp3")) or os.path.exists(os.path.join(cache_dir, f"{pure_hash}.wav"))
             cache_icon = " 🎵" if has_cache else ""
+            
+            action_row = ft.Row([
+                ft.TextButton("✏️", on_click=make_edit(real_idx), width=40, style=ft.ButtonStyle(padding=0)),
+                ft.TextButton("🗑️", on_click=make_delete(real_idx), width=40, style=ft.ButtonStyle(padding=0, color=ft.Colors.RED_400))
+            ], spacing=0)
+            
+            content_row = ft.Row([
+                ft.Text(fav.get("title", "Saved Document") + cache_icon, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE if is_selected else ft.Colors.WHITE70, expand=True),
+                action_row
+            ])
+            
+            fav_list.controls.append(
+                ft.Container(
+                    content=content_row,
+                    bgcolor=ft.Colors.BLUE_700 if is_selected else ft.Colors.TRANSPARENT,
+                    padding=10, border_radius=5, on_click=make_click(real_idx)
+                )
+            )
+        page.update()
+
+    def select_fav(idx):
+        selected_fav_idx[0] = idx
+        fav_text_area.value = favorites[idx].get("content", "")
+        refresh_fav_list()
+
+    def edit_specific_fav(idx):
+        selected_fav_idx[0] = idx
+        fav = favorites[idx]
+        text_area.value = fav.get("content", "")
+        reading_text.value = text_area.value
+        switch_to_tab("gen")
+        show_snack("Loaded favorite into generator.", ft.Colors.GREEN)
+
+    def delete_specific_fav(idx):
+        try:
+            content_to_delete = favorites[idx].get("content", "")
+            cache_dir = getattr(tf_cache_dir, 'value', "").strip()
+            if not cache_dir: cache_dir = DATA_DIR
+            pure_hash = hashlib.md5(content_to_delete.encode('utf-8')).hexdigest()
+            mp3_path = os.path.join(cache_dir, f"{pure_hash}.mp3")
+            wav_path = os.path.join(cache_dir, f"{pure_hash}.wav")
+            if os.path.exists(mp3_path): os.remove(mp3_path)
+            if os.path.exists(wav_path): os.remove(wav_path)
+        except: pass
+        
+        del favorites[idx]
+        if selected_fav_idx[0] == idx:
+            selected_fav_idx[0] = None
+            fav_text_area.value = "Select a favorite document to read here..."
+        elif selected_fav_idx[0] is not None and selected_fav_idx[0] > idx:
+            selected_fav_idx[0] -= 1
+            
+        save_favorites()
+        refresh_fav_list()
+        show_snack("Favorite deleted.", ft.Colors.GREEN)
+        page.update()
+
+    def on_save_favorite(e):
+        content = text_area.value.strip()
+        if not content or content.startswith("Welcome!"): return show_snack("Please generate or write a document first.", ft.Colors.ORANGE)
+        title = extract_title(content)
+        for fav in favorites:
+            if fav["content"] == content: return show_snack("This exact document is already in your favorites!", ft.Colors.ORANGE)
+        favorites.append({"title": title, "content": content})
+        save_favorites()
+        refresh_fav_list()
+        
+        cache_dir = getattr(tf_cache_dir, 'value', "").strip()
+        if not cache_dir: cache_dir = DATA_DIR
+        os.makedirs(cache_dir, exist_ok=True)
+        
+        audio_path = app_state.get("last_audio_path")
+        pure_text_hash = hashlib.md5(content.encode('utf-8')).hexdigest()
+        
+        cached_status = "❤️ Document saved to favorites!"
+        if audio_path and os.path.exists(audio_path):
+            ext = ".mp3" if audio_path.endswith(".mp3") else ".wav"
+            cache_path_pure = os.path.join(cache_dir, f"{pure_text_hash}{ext}")
+            if not os.path.exists(cache_path_pure):
+                try:
+                    shutil.copy2(audio_path, cache_path_pure)
+                    cached_status = "❤️ Document & Audio cached for offline playback!"
+                except Exception as ex:
+                    print(f"Audio cache error: {ex}")
+        
+        show_snack(cached_status, ft.Colors.GREEN)
+
+    def open_keys_dialog(e):
+        backend_name = dd_backend.value
+        if backend_name == "LM Studio (Local)": return show_snack("LM Studio runs locally and does not require API keys.", ft.Colors.BLUE)
+
+        backend_instance = get_active_backend()
+        keys_list = ft.ListView(spacing=5, height=150)
+        
+        def refresh_keys_list():
+            keys_list.controls.clear()
+            for k in backend_instance.keys: keys_list.controls.append(ft.Text(f"{k[:8]}...{k[-4:]}" if len(k) > 12 else k))
+            page.update()
+
+        new_key_field = ft.TextField(label=f"New {backend_name} API Key")
+        
+        def add_key_action(e):
+            val = new_key_field.value or ""
+            k = val.strip()
+            if k and k not in backend_instance.keys:
+                backend_instance.keys.append(k)
+                backend_instance.save_keys(backend_instance.keys)
+                new_key_field.value = ""
+                refresh_keys_list()
+                show_snack("Key added!", ft.Colors.GREEN)
+
+        def remove_keys_action(e):
+            if backend_instance.keys:
+                backend_instance.keys.pop()
+                backend_instance.save_keys(backend_instance.keys)
+                refresh_keys_list()
+                show_snack("Last key removed!", ft.Colors.ORANGE)
+
+        dlg = ft.AlertDialog(
+            title=ft.Text(f"Manage {backend_name} API Keys"),
+            content=ft.Column([
+                ft.Text("The app will automatically rotate through these keys.", italic=True, size=12),
+                keys_list, new_key_field,
+                ft.Row([ft.TextButton("Add", on_click=add_key_action, style=ft.ButtonStyle(bgcolor=ft.Colors.GREEN, color=ft.Colors.WHITE)), ft.TextButton("Remove Last", on_click=remove_keys_action, style=ft.ButtonStyle(bgcolor=ft.Colors.RED, color=ft.Colors.WHITE))])
+            ], tight=True),
+            actions=[ft.TextButton("Close", on_click=lambda e: hide_dialog(dlg))]
+        )
+        refresh_keys_list()
+        show_dialog(dlg)
+
+    # --- WIRE UP ALL BUTTON CALLBACKS ---
+    text_area.on_change = on_text_changed
+    top_play_btn.on_click = on_play_tts
+    top_rec_btn.on_click = on_record_clicked
+    copy_btn.on_click = copy_to_clipboard
+    generate_btn.on_click = on_generate
+    prompt_gen_btn.on_click = open_generate_ai_dialog
+    revise_btn.on_click = on_revise_standard
+    prompt_rev_btn.on_click = open_revise_ai_dialog
+    translate_btn.on_click = on_apply_verse
+    qa_btn.on_click = on_generate_qa
+    tts_btn.on_click = on_play_tts
+    save_btn.on_click = on_save_favorite
+    backup_btn.on_click = perform_backup
+    restore_btn.on_click = perform_restore
+    link_audio_btn.on_click = on_link_audio
+    el_manage_btn.on_click = open_el_dialog
+    fish_manage_btn.on_click = open_fish_dialog
+    test_vb_btn.on_click = test_voicebox_conn
+    btn_browse_cache.on_click = browse_cache_dir
+    btn_clear_cache.on_click = clear_cache_dir
+
+    # =======================================================
+    # UI TABS CONSTRUCTION
+    # =======================================================
+    
+    # 1. GENERATE TAB ACTIONS
+    gen_actions_container = ft.Column([
+        generate_btn,
+        ft.ResponsiveRow([
+            ft.Column([prompt_gen_btn], col={"xs": 6}), ft.Column([revise_btn], col={"xs": 6}),
+            ft.Column([prompt_rev_btn], col={"xs": 6}), ft.Column([translate_btn], col={"xs": 6}),
+            ft.Column([qa_btn], col={"xs": 6}), ft.Column([tts_btn], col={"xs": 6}),
+            ft.Column([save_btn], col={"xs": 6}), ft.Column([link_audio_btn], col={"xs": 6}),
+        ])
+    ])
+    
+    # 2. SETTINGS TAB CONTENT
+    settings_tab_content = ft.Column([
+        ft.Text("Content & Display Setup", weight=ft.FontWeight.BOLD, size=18, color=ft.Colors.BLUE_400),
+        ft.ResponsiveRow([
+            ft.Column([dd_format], col={"sm": 6, "xs": 6}), ft.Column([dd_style], col={"sm": 6, "xs": 6}),
+            ft.Column([dd_version], col={"sm": 6, "xs": 6}), ft.Column([dd_theme], col={"sm": 6, "xs": 6}),
+            ft.Column([dd_length], col={"sm": 6, "xs": 6}), ft.Column([dd_lang], col={"sm": 6, "xs": 6}),
+            ft.Column([dd_duration], col={"sm": 6, "xs": 6}), ft.Column([dd_font], col={"sm": 6, "xs": 6}),
+            ft.Column([dd_size], col={"sm": 6, "xs": 6}),
+        ]),
+        ft.Divider(),
+        ft.Text("AI Backend Models", weight=ft.FontWeight.BOLD, size=18, color=ft.Colors.BLUE_400),
+        ft.ResponsiveRow([
+            ft.Column([dd_backend], col={"sm": 6, "xs": 6}), ft.Column([dd_model], col={"sm": 6, "xs": 6}),
+        ]),
+        ft.Divider(),
+        ft.Text("Data Management", weight=ft.FontWeight.BOLD, size=18, color=ft.Colors.BLUE_400),
+        ft.ResponsiveRow([
+            ft.Column([backup_btn], col={"xs": 6}), ft.Column([restore_btn], col={"xs": 6})
+        ]),
+        ft.Container(height=50) # Padding for scrolling
+    ], scroll="auto", expand=True)
+
+    # 3. VOICE ENGINE TAB CONTENT
+    voice_tab_content = ft.Column([
+        ft.Text("TTS Engine Setup", weight=ft.FontWeight.BOLD, size=18, color=ft.Colors.PURPLE_400),
+        ft.ResponsiveRow([
+            ft.Column([dd_tts_engine], col={"sm": 12, "xs": 12}), 
+            ft.Column([chk_autoplay], col={"sm": 6, "xs": 6}), ft.Column([chk_force_cache], col={"sm": 6, "xs": 6}),
+            ft.Column([
+                ft.Row([
+                    ft.Text("Auto-Scroll Speed Multiplier:", font_family="Helvetica", size=14, weight="bold", color=ft.Colors.GREY_400),
+                    slider_label
+                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                scroll_speed_slider
+            ], col={"sm": 12, "xs": 12}),
+        ]),
+        ft.Divider(),
+        ft.Text("TikTok Configuration", weight=ft.FontWeight.BOLD, size=16, color=ft.Colors.PINK_400),
+        ft.ResponsiveRow([
+            ft.Column([tf_tiktok_session], col={"sm": 6, "xs": 6}), ft.Column([dd_tiktok_voice], col={"sm": 6, "xs": 6}),
+        ]),
+        ft.Divider(),
+        ft.Text("Voicebox Configuration", weight=ft.FontWeight.BOLD, size=16, color=ft.Colors.GREEN_400),
+        ft.ResponsiveRow([
+            ft.Column([tf_voicebox_url], col={"sm": 6, "xs": 12}), 
+            ft.Column([tf_voicebox_preset], col={"sm": 6, "xs": 6}),
+            ft.Column([dd_voicebox_engine], col={"sm": 6, "xs": 6}), 
+            ft.Column([test_vb_btn], col={"sm": 12, "xs": 12}),
+        ]),
+        ft.Divider(),
+        ft.Text("ElevenLabs & Fish Speech", weight=ft.FontWeight.BOLD, size=16, color=ft.Colors.ORANGE_400),
+        ft.ResponsiveRow([
+            ft.Column([dd_elevenlabs_preset], col={"sm": 6, "xs": 6}), ft.Column([el_manage_btn], col={"sm": 6, "xs": 6}),
+            ft.Column([tf_fish_url], col={"sm": 12, "xs": 12}),
+            ft.Column([dd_fish_preset], col={"sm": 6, "xs": 6}), ft.Column([fish_manage_btn], col={"sm": 6, "xs": 6}),
+        ]),
+        ft.Divider(),
+        ft.Text("Offline Audio Cache", weight=ft.FontWeight.BOLD, size=16, color=ft.Colors.CYAN_400),
+        ft.ResponsiveRow([
+            ft.Column([ft.Row([tf_cache_dir, btn_browse_cache, btn_clear_cache], expand=True)], col={"sm": 12, "xs": 12}),
+        ]),
+        ft.Container(height=50) # Padding for scrolling
+    ], scroll="auto", expand=True)
+
+    # 4. FAVORITES TAB CONTENT
+    custom_border = ft.Border(top=ft.BorderSide(1, "#374151"), bottom=ft.BorderSide(1, "#374151"), left=ft.BorderSide(1, "#374151"), right=ft.BorderSide(1, "#374151"))
+    
+    def open_cache_folder_cmd(e):
+        cache_dir = getattr(tf_cache_dir, 'value', "").strip()
+        if not cache_dir: cache_dir = DATA_DIR
+        os.makedirs(cache_dir, exist_ok=True)
+        try:
+            if platform.system() == "Windows":
+                os.startfile(cache_dir)
+            elif platform.system() == "Darwin":
+                subprocess.Popen(["open", cache_dir])
+            else:
+                subprocess.Popen(["xdg-open", cache_dir])
+        except Exception as ex:
+            show_snack(f"Could not open folder: {ex}", ft.Colors.RED)
+
+    fav_title_row = ft.Row([
+        ft.Text("Saved Documents", weight=ft.FontWeight.BOLD),
+        ft.Container(expand=True),
+        ft.TextButton("📁 Open Cache Folder", on_click=open_cache_folder_cmd, height=30, style=ft.ButtonStyle(padding=0))
+    ])
+
+    favorites_tab_content = ft.Column([
+        fav_title_row,
+        ft.Container(content=fav_list, expand=True, border=custom_border, border_radius=5, padding=5)
+    ], expand=True)
+
+    # =======================================================
+    # FULLSCREEN & TAB NAVIGATION LOGIC
+    # =======================================================
+    
+    header_gen_left = ft.Row([
+        ft.Text("Preview", weight="bold", color=ft.Colors.GREY_500), 
+        top_play_btn, top_rec_btn, copy_btn
+    ], alignment=ft.MainAxisAlignment.START, spacing=0)
+
+    # Create space-saving buttons
+    fs_portrait_btn = ft.TextButton("📱 Port", tooltip="Portrait Mode", on_click=lambda e: set_fullscreen("portrait"), style=ft.ButtonStyle(color="#60A5FA"))
+    fs_landscape_btn = ft.TextButton("📺 Land", tooltip="Landscape Mode", on_click=lambda e: set_fullscreen("landscape"), style=ft.ButtonStyle(color="#60A5FA"))
+    fs_exit_btn = ft.TextButton("↙️ Exit", tooltip="Exit Fullscreen", on_click=lambda e: set_fullscreen("none"), style=ft.ButtonStyle(color="#60A5FA"), visible=False)
+    
+    fs_portrait_btn.visible = True
+    fs_landscape_btn.visible = True
+    fs_exit_btn.visible = False
+    
+    fs_row = ft.Row([fs_portrait_btn, fs_landscape_btn, fs_exit_btn], spacing=0)
+    header_gen = ft.Row([header_gen_left, fs_row], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
+    
+    generator_tab_content = ft.Column([header_gen, text_container_gen, ft.Divider(color=ft.Colors.TRANSPARENT, height=5), gen_actions_container], expand=True, scroll="hidden", spacing=0) 
+
+    tab_view_container = ft.Container(
+        content=ft.Column([
+            generator_tab_content,
+            settings_tab_content,
+            voice_tab_content,
+            favorites_tab_content
+        ], expand=True), 
+        expand=True, 
+        padding=10
+    )
+    
+    active_tab_style = ft.ButtonStyle(bgcolor="#1D4ED8", color=ft.Colors.WHITE, shape=ft.RoundedRectangleBorder(radius=5), padding=ft.padding.symmetric(horizontal=8, vertical=0))
+    inactive_tab_style = ft.ButtonStyle(bgcolor=ft.Colors.TRANSPARENT, color=ft.Colors.GREY_400, shape=ft.RoundedRectangleBorder(radius=5), padding=ft.padding.symmetric(horizontal=8, vertical=0))
+
+    gen_tab_btn = ft.TextButton("✨ Gen", expand=True, on_click=lambda e: switch_to_tab("gen"), style=inactive_tab_style)
+    set_tab_btn = ft.TextButton("⚙️ Setup", expand=True, on_click=lambda e: switch_to_tab("set"), style=inactive_tab_style)
+    voice_tab_btn = ft.TextButton("🗣️ Voice", expand=True, on_click=lambda e: switch_to_tab("voice"), style=inactive_tab_style)
+    fav_tab_btn = ft.TextButton("❤️ Favs", expand=True, on_click=lambda e: switch_to_tab("fav"), style=inactive_tab_style)
+    
+    tabs_row_container = ft.Container(content=ft.Row([gen_tab_btn, set_tab_btn, voice_tab_btn, fav_tab_btn], alignment=ft.MainAxisAlignment.CENTER, spacing=2), padding=ft.padding.only(left=5, right=5, top=5))
+
+    def switch_to_tab(tab_name):
+        gen_tab_btn.style = inactive_tab_style
+        set_tab_btn.style = inactive_tab_style
+        voice_tab_btn.style = inactive_tab_style
+        fav_tab_btn.style = inactive_tab_style
+        
+        # Hide all contents natively via CSS
+        generator_tab_content.visible = False
+        settings_tab_content.visible = False
+        voice_tab_content.visible = False
+        favorites_tab_content.visible = False
+
+        if tab_name == "gen":
+            generator_tab_content.visible = True
+            gen_tab_btn.style = active_tab_style
+        elif tab_name == "set":
+            settings_tab_content.visible = True
+            set_tab_btn.style = active_tab_style
+        elif tab_name == "voice":
+            voice_tab_content.visible = True
+            voice_tab_btn.style = active_tab_style
+        else:
+            favorites_tab_content.visible = True
+            fav_tab_btn.style = active_tab_style
+            
+        page.update()
+
+    def set_fullscreen(mode):
+        current_fullscreen_mode[0] = mode
+        if mode == "none":
+            is_fullscreen[0] = False
+            if not is_android_sys():
+                set_window_size(page, 450, 850)
+            
+            if not is_video_recording[0]:
+                reading_container.border = ft.border.all(1.5, ft.Colors.BLUE_600)
+                
+            reading_container.padding = ft.padding.only(left=20, right=20, top=15, bottom=15)
+        elif mode == "portrait":
+            is_fullscreen[0] = True
+            if not is_android_sys():
+                set_window_size(page, 450, 800)
+            reading_container.border = None
+            reading_container.padding = ft.padding.only(left=25, right=25, top=35, bottom=35)
+        elif mode == "landscape":
+            is_fullscreen[0] = True
+            if not is_android_sys():
+                set_window_size(page, 800, 450)
+            reading_container.border = None
+            reading_container.padding = ft.padding.only(left=40, right=40, top=35, bottom=35)
+            
+        title_row.visible = not is_fullscreen[0]
+        status_row.visible = not is_fullscreen[0]
+        tabs_row_container.visible = not is_fullscreen[0]
+        gen_actions_container.visible = not is_fullscreen[0]
+        
+        if is_fullscreen[0]:
+            generator_tab_content.scroll = None
+            text_container_gen.height = None
+            text_container_gen.expand = True
+            tab_view_container.padding = 0
+            
+            fs_portrait_btn.visible = False
+            fs_landscape_btn.visible = False
+            fs_exit_btn.visible = True
+        else:
+            generator_tab_content.scroll = "hidden"
+            text_container_gen.height = 380
+            text_container_gen.expand = False
+            tab_view_container.padding = 10
+            
+            fs_portrait_btn.visible = True
+            fs_landscape_btn.visible = True
+            fs_exit_btn.visible = False
+            
+        page.update()
+
+    switch_to_tab("gen")
+    refresh_fav_list()
+    update_font()
+    on_backend_change(None)
+
+    title_row = ft.Row(
+        [ft.Container(width=45), ft.Text("Edu's Daily Devotional", size=20, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER), ft.TextButton("🔑", on_click=open_keys_dialog, width=45, height=45, tooltip="API Keys", style=ft.ButtonStyle(padding=0))],
+        alignment=ft.MainAxisAlignment.SPACE_BETWEEN
+    )
+
+    status_row = ft.Row([pr, status_text], alignment=ft.MainAxisAlignment.CENTER)
+    page.add(title_row, status_row, tabs_row_container, tab_view_container)
+
+if __name__ == "__main__":
+    try:
+        ft.app(target=main, assets_dir=DATA_DIR)
+    except Exception as e:
+        print("\n❌ FATAL CRASH OCCURRED ❌")
+        traceback.print_exc()
+        if not is_android_sys(): input("\nPress Enter to close this window...")
