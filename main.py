@@ -23,12 +23,8 @@ import socketserver
 # STRICT, UNCONDITIONAL IMPORTS
 # ---------------------------------------------------------
 import flet as ft
-try:
-    import flet_audio as fta
-    from flet_audio import Audio
-except ImportError:
-    fta = None
-    Audio = None
+import flet_audio as fta
+from flet_audio import Audio
 import requests
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
