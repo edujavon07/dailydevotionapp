@@ -21,10 +21,10 @@ import socketserver
 
 # ---------------------------------------------------------
 # STRICT, UNCONDITIONAL IMPORTS
+# Removed flet_audio globally to prevent Flet's Android
+# compiler from crashing the UI if it fails to bundle it!
 # ---------------------------------------------------------
 import flet as ft
-import flet_audio as fta
-from flet_audio import Audio
 import requests
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -987,7 +987,7 @@ def main(page: ft.Page):
 
     chk_autoplay = ft.Checkbox(label="Auto-Play Audio", value=True)
     chk_force_cache = ft.Checkbox(label="Force Cache Only (Silent if missing)", value=False)
-    chk_safe_audio = ft.Checkbox(label="Bypass Red Screen (Browser Audio Fallback)", value=False)
+    chk_safe_audio = ft.Checkbox(label="Use Browser Audio (Fixes Android Crash)", value=is_android_sys())
     
     scroll_speed_slider = ft.Slider(min=0, max=100, divisions=100, value=20)
     slider_label = ft.Text(f"{20 / 20.0:.1f}x", size=14, weight="bold", color=ft.Colors.BLUE_400)
@@ -1078,20 +1078,11 @@ def main(page: ft.Page):
             except: pass
 
     # =========================================================
-    # THE FLET COMPILER FIX
-    # We forcefully instantiate the explicit Audio class
-    # and attach it immediately to satisfy Flutter's UI tree!
-    # On Windows/PC, we skip this to prevent "Unknown control" 
-    # errors and rely on the PyGame fallback instead!
+    # DELAYED AUDIO INJECTION
+    # We DO NOT initialize the audio player on boot.
+    # It will only be appended when needed to prevent crashes!
     # =========================================================
     audio_player = None
-    if is_android_sys():
-        try:
-            audio_player = Audio(autoplay=False)
-            audio_player.on_state_changed = on_audio_state_changed
-            page.overlay.append(audio_player)
-        except Exception:
-            pass
 
     groq_backend = GroqBackend(CONFIG_FILE)
     gemini_backend = GeminiBackend(CONFIG_FILE)
@@ -1127,7 +1118,7 @@ def main(page: ft.Page):
     
     chk_autoplay.value = app_settings.get("autoplay", True)
     chk_force_cache.value = app_settings.get("force_cache", False)
-    chk_safe_audio.value = app_settings.get("safe_audio", False)
+    chk_safe_audio.value = app_settings.get("safe_audio", True if is_android_sys() else False)
     
     saved_scroll_speed = app_settings.get("scroll_speed", 20)
     scroll_speed_slider.value = saved_scroll_speed
@@ -2360,18 +2351,24 @@ def main(page: ft.Page):
                                     pygame.mixer.music.load(output_path)
                                     pygame.mixer.music.play()
                                     
-                                elif audio_player:
-                                    # Standard Flet Audio
+                                else:
+                                    # Standard Flet Audio (Dynamic Import)
                                     try: 
+                                        import flet_audio
+                                        global audio_player
+                                        if 'audio_player' not in globals() or not audio_player:
+                                            audio_player = flet_audio.Audio(autoplay=False)
+                                            audio_player.on_state_changed = on_audio_state_changed
+                                            page.overlay.append(audio_player)
+                                            page.update()
+                                            
                                         audio_player.src = None  
                                         audio_player.src_base64 = b64_audio_data 
                                         page.update()
                                         audio_player.update()
                                         audio_player.play()
                                     except Exception as e:
-                                        show_snack(f"Audio playback error: {e}", ft.Colors.RED)
-                                else:
-                                    show_snack("Flet-Audio plugin missing! Check 'Bypass Red Screen' in Voice settings.", ft.Colors.RED)
+                                        show_snack(f"Flet-Audio missing from APK! Go to 'Voice' tab and select 'Use Browser Audio'.", ft.Colors.RED)
 
                             if record_video and is_cached:
                                 status_msg = "🔴 Recording Video (Audio from Cache)..."
