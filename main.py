@@ -1002,7 +1002,7 @@ def main(page: ft.Page):
     # THE AUDIO PLAYER INJECTION
     # Fully Restored Native Audio Object
     # =========================================================
-    try:
+   try:
         if AudioControl:
             audio_player = AudioControl(autoplay=False)
             audio_player.on_state_changed = on_audio_state_changed
@@ -1016,7 +1016,7 @@ def main(page: ft.Page):
                 # If you eventually build a final standalone APK using `flet build apk`, 
                 # you MUST add `flet-audio` to your requirements.txt. 
                 # Once you do that, you can uncomment the line below:
-                 page.overlay.append(audio_player)
+                # page.overlay.append(audio_player)
                 pass 
         else:
             audio_player = None
