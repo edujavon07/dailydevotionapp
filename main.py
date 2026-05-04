@@ -998,11 +998,12 @@ def main(page: ft.Page):
                 text_container_gen.update()
                 page.update()
             except: pass
-# =========================================================
+
+    # =========================================================
     # THE AUDIO PLAYER INJECTION
     # Fully Restored Native Audio Object
     # =========================================================
-   try:
+    try:
         if AudioControl:
             audio_player = AudioControl(autoplay=False)
             audio_player.on_state_changed = on_audio_state_changed
@@ -2194,7 +2195,7 @@ def main(page: ft.Page):
                                                 audio_player.on_state_changed = on_audio_state_changed
                                                 page.overlay.append(audio_player)
                                                 page.update()
-                                            
+                                        
                                         # Ensure the audio player exists AND is mounted to the page
                                         if audio_player and getattr(audio_player, "page", None):
                                             # BYPASS FLET HTTP SERVER!
@@ -2212,6 +2213,8 @@ def main(page: ft.Page):
                                             show_snack("Audio playback is disabled on Android to prevent the red screen crash.", ft.Colors.ORANGE)
                                         else:
                                             show_snack("Audio Engine Missing! Flet Audio not loaded.", ft.Colors.RED)
+                                    except Exception as e:
+                                        show_snack(f"Flet Audio Error: {e}", ft.Colors.RED)
 
                             if record_video and is_cached: status_msg = "🔴 Recording Video (Audio from Cache)..."
                             elif record_video and is_silent_playback: status_msg = "🔴 Recording Video (Silent Mode)..."
@@ -2674,4 +2677,290 @@ def main(page: ft.Page):
             if backend_instance.keys:
                 backend_instance.keys.pop()
                 backend_instance.save_keys(backend_instance.keys)
-                refresh_
+                refresh_keys_list()
+                show_snack("Last key removed!", ft.Colors.ORANGE)
+
+        dlg = ft.AlertDialog(
+            title=ft.Text(f"Manage {backend_name} API Keys"),
+            content=ft.Column([
+                ft.Text("The app will automatically rotate through these keys.", italic=True, size=12),
+                keys_list, new_key_field,
+                ft.Row([ft.TextButton("Add", on_click=add_key_action, style=ft.ButtonStyle(bgcolor=ft.Colors.GREEN, color=ft.Colors.WHITE)), ft.TextButton("Remove Last", on_click=remove_keys_action, style=ft.ButtonStyle(bgcolor=ft.Colors.RED, color=ft.Colors.WHITE))])
+            ], tight=True),
+            actions=[ft.TextButton("Close", on_click=lambda e: hide_dialog(dlg))]
+        )
+        refresh_keys_list()
+        show_dialog(dlg)
+
+    # --- WIRE UP ALL BUTTON CALLBACKS ---
+    text_area.on_change = on_text_changed
+    top_play_btn.on_click = on_play_tts
+    top_rec_btn.on_click = on_record_clicked
+    copy_btn.on_click = copy_to_clipboard
+    generate_btn.on_click = on_generate
+    prompt_gen_btn.on_click = open_generate_ai_dialog
+    revise_btn.on_click = on_revise_standard
+    prompt_rev_btn.on_click = open_revise_ai_dialog
+    translate_btn.on_click = on_apply_verse
+    qa_btn.on_click = on_generate_qa
+    tts_btn.on_click = on_play_tts
+    save_btn.on_click = on_save_favorite
+    backup_btn.on_click = perform_backup
+    restore_btn.on_click = perform_restore
+    link_audio_btn.on_click = on_link_audio
+    el_manage_btn.on_click = open_el_dialog
+    fish_manage_btn.on_click = open_fish_dialog
+    test_vb_btn.on_click = test_voicebox_conn
+    btn_browse_cache.on_click = browse_cache_dir
+    btn_clear_cache.on_click = clear_cache_dir
+
+    # =======================================================
+    # UI TABS CONSTRUCTION
+    # =======================================================
+    
+    # 1. GENERATE TAB ACTIONS
+    gen_actions_container = ft.Column([
+        generate_btn,
+        ft.ResponsiveRow([
+            ft.Column([prompt_gen_btn], col={"xs": 6}), ft.Column([revise_btn], col={"xs": 6}),
+            ft.Column([prompt_rev_btn], col={"xs": 6}), ft.Column([translate_btn], col={"xs": 6}),
+            ft.Column([qa_btn], col={"xs": 6}), ft.Column([tts_btn], col={"xs": 6}),
+            ft.Column([save_btn], col={"xs": 6}), ft.Column([link_audio_btn], col={"xs": 6}),
+        ])
+    ])
+    
+    # 2. SETTINGS TAB CONTENT
+    settings_tab_content = ft.Column([
+        ft.Text("Content & Display Setup", weight=ft.FontWeight.BOLD, size=18, color=ft.Colors.BLUE_400),
+        ft.ResponsiveRow([
+            ft.Column([dd_format], col={"sm": 6, "xs": 6}), ft.Column([dd_style], col={"sm": 6, "xs": 6}),
+            ft.Column([dd_version], col={"sm": 6, "xs": 6}), ft.Column([dd_theme], col={"sm": 6, "xs": 6}),
+            ft.Column([dd_length], col={"sm": 6, "xs": 6}), ft.Column([dd_lang], col={"sm": 6, "xs": 6}),
+            ft.Column([dd_duration], col={"sm": 6, "xs": 6}), ft.Column([dd_font], col={"sm": 6, "xs": 6}),
+            ft.Column([dd_size], col={"sm": 6, "xs": 6}),
+        ]),
+        ft.Divider(),
+        ft.Text("AI Backend Models", weight=ft.FontWeight.BOLD, size=18, color=ft.Colors.BLUE_400),
+        ft.ResponsiveRow([
+            ft.Column([dd_backend], col={"sm": 6, "xs": 6}), ft.Column([dd_model], col={"sm": 6, "xs": 6}),
+        ]),
+        ft.Divider(),
+        ft.Text("Data Management", weight=ft.FontWeight.BOLD, size=18, color=ft.Colors.BLUE_400),
+        ft.ResponsiveRow([
+            ft.Column([backup_btn], col={"xs": 6}), ft.Column([restore_btn], col={"xs": 6})
+        ]),
+        ft.Container(height=50) # Padding for scrolling
+    ], scroll="auto", expand=True)
+
+    # 3. VOICE ENGINE TAB CONTENT
+    voice_tab_content = ft.Column([
+        ft.Text("TTS Engine Setup", weight=ft.FontWeight.BOLD, size=18, color=ft.Colors.PURPLE_400),
+        ft.ResponsiveRow([
+            ft.Column([dd_tts_engine], col={"sm": 12, "xs": 12}), 
+            ft.Column([chk_autoplay], col={"sm": 6, "xs": 6}), ft.Column([chk_force_cache], col={"sm": 6, "xs": 6}),
+            ft.Column([
+                ft.Row([
+                    ft.Text("Auto-Scroll Speed Multiplier:", font_family="Helvetica", size=14, weight="bold", color=ft.Colors.GREY_400),
+                    slider_label
+                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                scroll_speed_slider
+            ], col={"sm": 12, "xs": 12}),
+        ]),
+        ft.Divider(),
+        ft.Text("TikTok Configuration", weight=ft.FontWeight.BOLD, size=16, color=ft.Colors.PINK_400),
+        ft.ResponsiveRow([
+            ft.Column([tf_tiktok_session], col={"sm": 6, "xs": 6}), ft.Column([dd_tiktok_voice], col={"sm": 6, "xs": 6}),
+        ]),
+        ft.Divider(),
+        ft.Text("Voicebox Configuration", weight=ft.FontWeight.BOLD, size=16, color=ft.Colors.GREEN_400),
+        ft.ResponsiveRow([
+            ft.Column([tf_voicebox_url], col={"sm": 6, "xs": 12}), 
+            ft.Column([tf_voicebox_preset], col={"sm": 6, "xs": 6}),
+            ft.Column([dd_voicebox_engine], col={"sm": 6, "xs": 6}), 
+            ft.Column([test_vb_btn], col={"sm": 12, "xs": 12}),
+        ]),
+        ft.Divider(),
+        ft.Text("ElevenLabs & Fish Speech", weight=ft.FontWeight.BOLD, size=16, color=ft.Colors.ORANGE_400),
+        ft.ResponsiveRow([
+            ft.Column([dd_elevenlabs_preset], col={"sm": 6, "xs": 6}), ft.Column([el_manage_btn], col={"sm": 6, "xs": 6}),
+            ft.Column([tf_fish_url], col={"sm": 12, "xs": 12}),
+            ft.Column([dd_fish_preset], col={"sm": 6, "xs": 6}), ft.Column([fish_manage_btn], col={"sm": 6, "xs": 6}),
+        ]),
+        ft.Divider(),
+        ft.Text("Offline Audio Cache", weight=ft.FontWeight.BOLD, size=16, color=ft.Colors.CYAN_400),
+        ft.ResponsiveRow([
+            ft.Column([ft.Row([tf_cache_dir, btn_browse_cache, btn_clear_cache], expand=True)], col={"sm": 12, "xs": 12}),
+        ]),
+        ft.Container(height=50) # Padding for scrolling
+    ], scroll="auto", expand=True)
+
+    # 4. FAVORITES TAB CONTENT
+    custom_border = ft.Border(top=ft.BorderSide(1, "#374151"), bottom=ft.BorderSide(1, "#374151"), left=ft.BorderSide(1, "#374151"), right=ft.BorderSide(1, "#374151"))
+    
+    def open_cache_folder_cmd(e):
+        cache_dir = getattr(tf_cache_dir, 'value', "").strip()
+        if not cache_dir: cache_dir = DATA_DIR
+        os.makedirs(cache_dir, exist_ok=True)
+        try:
+            if platform.system() == "Windows":
+                os.startfile(cache_dir)
+            elif platform.system() == "Darwin":
+                subprocess.Popen(["open", cache_dir])
+            else:
+                subprocess.Popen(["xdg-open", cache_dir])
+        except Exception as ex:
+            show_snack(f"Could not open folder: {ex}", ft.Colors.RED)
+
+    fav_title_row = ft.Row([
+        ft.Text("Saved Documents", weight=ft.FontWeight.BOLD),
+        ft.Container(expand=True),
+        ft.TextButton("📁 Open Cache Folder", on_click=open_cache_folder_cmd, height=30, style=ft.ButtonStyle(padding=0))
+    ])
+
+    favorites_tab_content = ft.Column([
+        fav_title_row,
+        ft.Container(content=fav_list, expand=True, border=custom_border, border_radius=5, padding=5)
+    ], expand=True)
+
+    # =======================================================
+    # FULLSCREEN & TAB NAVIGATION LOGIC
+    # =======================================================
+    
+    header_gen_left = ft.Row([
+        ft.Text("Preview", weight="bold", color=ft.Colors.GREY_500), 
+        top_play_btn, top_rec_btn, copy_btn
+    ], alignment=ft.MainAxisAlignment.START, spacing=0)
+
+    # Create space-saving buttons
+    fs_portrait_btn = ft.TextButton("📱 Port", tooltip="Portrait Mode", on_click=lambda e: set_fullscreen("portrait"), style=ft.ButtonStyle(color="#60A5FA"))
+    fs_landscape_btn = ft.TextButton("📺 Land", tooltip="Landscape Mode", on_click=lambda e: set_fullscreen("landscape"), style=ft.ButtonStyle(color="#60A5FA"))
+    fs_exit_btn = ft.TextButton("↙️ Exit", tooltip="Exit Fullscreen", on_click=lambda e: set_fullscreen("none"), style=ft.ButtonStyle(color="#60A5FA"), visible=False)
+    
+    fs_portrait_btn.visible = True
+    fs_landscape_btn.visible = True
+    fs_exit_btn.visible = False
+    
+    fs_row = ft.Row([fs_portrait_btn, fs_landscape_btn, fs_exit_btn], spacing=0)
+    header_gen = ft.Row([header_gen_left, fs_row], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
+    
+    generator_tab_content = ft.Column([header_gen, text_container_gen, ft.Divider(color=ft.Colors.TRANSPARENT, height=5), gen_actions_container], expand=True, scroll="hidden", spacing=0) 
+
+    tab_view_container = ft.Container(
+        content=ft.Column([
+            generator_tab_content,
+            settings_tab_content,
+            voice_tab_content,
+            favorites_tab_content
+        ], expand=True), 
+        expand=True, 
+        padding=10
+    )
+    
+    active_tab_style = ft.ButtonStyle(bgcolor="#1D4ED8", color=ft.Colors.WHITE, shape=ft.RoundedRectangleBorder(radius=5), padding=ft.padding.symmetric(horizontal=8, vertical=0))
+    inactive_tab_style = ft.ButtonStyle(bgcolor=ft.Colors.TRANSPARENT, color=ft.Colors.GREY_400, shape=ft.RoundedRectangleBorder(radius=5), padding=ft.padding.symmetric(horizontal=8, vertical=0))
+
+    gen_tab_btn = ft.TextButton("✨ Gen", expand=True, on_click=lambda e: switch_to_tab("gen"), style=inactive_tab_style)
+    set_tab_btn = ft.TextButton("⚙️ Setup", expand=True, on_click=lambda e: switch_to_tab("set"), style=inactive_tab_style)
+    voice_tab_btn = ft.TextButton("🗣️ Voice", expand=True, on_click=lambda e: switch_to_tab("voice"), style=inactive_tab_style)
+    fav_tab_btn = ft.TextButton("❤️ Favs", expand=True, on_click=lambda e: switch_to_tab("fav"), style=inactive_tab_style)
+    
+    tabs_row_container = ft.Container(content=ft.Row([gen_tab_btn, set_tab_btn, voice_tab_btn, fav_tab_btn], alignment=ft.MainAxisAlignment.CENTER, spacing=2), padding=ft.padding.only(left=5, right=5, top=5))
+
+    def switch_to_tab(tab_name):
+        gen_tab_btn.style = inactive_tab_style
+        set_tab_btn.style = inactive_tab_style
+        voice_tab_btn.style = inactive_tab_style
+        fav_tab_btn.style = inactive_tab_style
+        
+        # Hide all contents natively via CSS
+        generator_tab_content.visible = False
+        settings_tab_content.visible = False
+        voice_tab_content.visible = False
+        favorites_tab_content.visible = False
+
+        if tab_name == "gen":
+            generator_tab_content.visible = True
+            gen_tab_btn.style = active_tab_style
+        elif tab_name == "set":
+            settings_tab_content.visible = True
+            set_tab_btn.style = active_tab_style
+        elif tab_name == "voice":
+            voice_tab_content.visible = True
+            voice_tab_btn.style = active_tab_style
+        else:
+            favorites_tab_content.visible = True
+            fav_tab_btn.style = active_tab_style
+            
+        page.update()
+
+    def set_fullscreen(mode):
+        current_fullscreen_mode[0] = mode
+        if mode == "none":
+            is_fullscreen[0] = False
+            if not is_android_sys():
+                set_window_size(page, 450, 850)
+            
+            if not is_video_recording[0]:
+                reading_container.border = ft.border.all(1.5, ft.Colors.BLUE_600)
+                
+            reading_container.padding = ft.padding.only(left=20, right=20, top=15, bottom=15)
+        elif mode == "portrait":
+            is_fullscreen[0] = True
+            if not is_android_sys():
+                set_window_size(page, 450, 800)
+            reading_container.border = None
+            reading_container.padding = ft.padding.only(left=25, right=25, top=35, bottom=35)
+        elif mode == "landscape":
+            is_fullscreen[0] = True
+            if not is_android_sys():
+                set_window_size(page, 800, 450)
+            reading_container.border = None
+            reading_container.padding = ft.padding.only(left=40, right=40, top=35, bottom=35)
+            
+        title_row.visible = not is_fullscreen[0]
+        status_row.visible = not is_fullscreen[0]
+        tabs_row_container.visible = not is_fullscreen[0]
+        gen_actions_container.visible = not is_fullscreen[0]
+        
+        if is_fullscreen[0]:
+            generator_tab_content.scroll = None
+            text_container_gen.height = None
+            text_container_gen.expand = True
+            tab_view_container.padding = 0
+            
+            fs_portrait_btn.visible = False
+            fs_landscape_btn.visible = False
+            fs_exit_btn.visible = True
+        else:
+            generator_tab_content.scroll = "hidden"
+            text_container_gen.height = 380
+            text_container_gen.expand = False
+            tab_view_container.padding = 10
+            
+            fs_portrait_btn.visible = True
+            fs_landscape_btn.visible = True
+            fs_exit_btn.visible = False
+            
+        page.update()
+
+    switch_to_tab("gen")
+    refresh_fav_list()
+    update_font()
+    on_backend_change(None)
+
+    title_row = ft.Row(
+        [ft.Container(width=45), ft.Text(f"Edu's Daily Devotional {APP_VERSION}", size=18, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER), ft.TextButton("🔑", on_click=open_keys_dialog, width=45, height=45, tooltip="API Keys", style=ft.ButtonStyle(padding=0))],
+        alignment=ft.MainAxisAlignment.SPACE_BETWEEN
+    )
+
+    status_row = ft.Row([pr, status_text], alignment=ft.MainAxisAlignment.CENTER)
+    page.add(title_row, status_row, tabs_row_container, tab_view_container)
+
+if __name__ == "__main__":
+    try:
+        # DATA_DIR is passed to assets_dir, turning the folder into Flet's internal web root!
+        ft.app(target=main, assets_dir=DATA_DIR)
+    except Exception as e:
+        print("\n❌ FATAL CRASH OCCURRED ❌")
+        traceback.print_exc()
+        if not is_android_sys(): input("\nPress Enter to close this window...")
