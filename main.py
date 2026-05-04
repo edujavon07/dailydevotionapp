@@ -21,19 +21,14 @@ import base64
 # STABLE ENGINE IMPORTS (v0.21.2 Compatible)
 # ---------------------------------------------------------
 import flet as ft
-try:
-    import flet_audio as fta
-    AudioControl = fta.Audio
-except ImportError:
-    try:
-        AudioControl = ft.Audio
-    except AttributeError:
-        AudioControl = None
+# FORCE THE FLET BUILDER TO DETECT AND BUNDLE THE AUDIO PLUGIN
+import flet_audio as fta
+AudioControl = fta.Audio
 import requests
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-APP_VERSION = "v3.2 (Clean Native Audio)"
+APP_VERSION = "v3.3 (Final APK Build)"
 
 # =========================================================
 # SAFE WRITABLE DIRECTORY
@@ -1008,18 +1003,7 @@ def main(page: ft.Page):
         if AudioControl:
             audio_player = AudioControl(autoplay=False)
             audio_player.on_state_changed = on_audio_state_changed
-            
-            # --- FIX FOR "Unknown control: Audio" RED SCREEN ON ANDROID ---
-            # The default Android Flet app doesn't have the audio package bundled.
-            # Appending it causes the red crash. We skip appending on Android.
-            if not is_android_sys():
-                page.overlay.append(audio_player)
-            else:
-                # If you eventually build a final standalone APK using `flet build apk`, 
-                # you MUST add `flet-audio` to your requirements.txt. 
-                # Once you do that, you can uncomment the line below:
-                # page.overlay.append(audio_player)
-                pass 
+            page.overlay.append(audio_player)
         else:
             audio_player = None
     except Exception as e:
@@ -2199,19 +2183,15 @@ def main(page: ft.Page):
                                         
                                         # Ensure the audio player exists AND is mounted to the page
                                         if audio_player and getattr(audio_player, "page", None):
-                                            # BYPASS FLET HTTP SERVER!
-                                            # Feed ExoPlayer the absolute local hard-drive path
-                                            safe_path = play_target_path
-                                            if is_android_sys() and not safe_path.startswith("file://"):
-                                                safe_path = f"file://{safe_path}"
-                                            audio_player.src = safe_path
+                                            # FLET ASSET SERVER INJECTION
+                                            # Instead of using file:// paths which break Android 11+ Scoped Storage,
+                                            # we use the relative filename. Flet's internal webserver will stream it!
+                                            audio_player.src = play_target_filename
                                             try: audio_player.src_base64 = None
                                             except: pass
                                             page.update()
                                             audio_player.update()
                                             audio_player.play()
-                                        elif is_android_sys():
-                                            show_snack("Audio playback is disabled on Android to prevent the red screen crash.", ft.Colors.ORANGE)
                                         else:
                                             show_snack("Audio Engine Missing! Flet Audio not loaded.", ft.Colors.RED)
                                     except Exception as e:
