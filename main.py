@@ -18,17 +18,24 @@ import shutil
 import hashlib
 
 # ---------------------------------------------------------
-# STRICT, UNCONDITIONAL IMPORTS
-# We have fully restored flet_audio!
+# STABLE AUDIO ENGINE RESOLVER
+# This automatically falls back to Flet's built-in audio
+# engine (v0.21.2) to permanently prevent compiler crashes!
 # ---------------------------------------------------------
 import flet as ft
-import flet_audio as fta
-from flet_audio import Audio
+try:
+    import flet_audio as fta
+    AudioControl = fta.Audio
+except ImportError:
+    try:
+        AudioControl = ft.Audio
+    except AttributeError:
+        AudioControl = None
 import requests
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-APP_VERSION = "v2.7"
+APP_VERSION = "v2.8"
 
 # =========================================================
 # THE ANDROID CRASH FIX: SAFE WRITABLE DIRECTORY
@@ -1055,12 +1062,15 @@ def main(page: ft.Page):
 
     # =========================================================
     # THE AUDIO PLAYER INJECTION
-    # Fully Restored to Native flet-audio
+    # Fully Restored to Native Flet Engine compatibility
     # =========================================================
     try:
-        audio_player = Audio(autoplay=False)
-        audio_player.on_state_changed = on_audio_state_changed
-        page.overlay.append(audio_player)
+        if AudioControl:
+            audio_player = AudioControl(autoplay=False)
+            audio_player.on_state_changed = on_audio_state_changed
+            page.overlay.append(audio_player)
+        else:
+            audio_player = None
     except Exception as e:
         audio_player = None
         print(f"Audio init failed: {e}")
@@ -2313,19 +2323,24 @@ def main(page: ft.Page):
                                     try: 
                                         global audio_player
                                         if 'audio_player' not in globals() or not audio_player:
-                                            audio_player = Audio(autoplay=False)
-                                            audio_player.on_state_changed = on_audio_state_changed
-                                            page.overlay.append(audio_player)
-                                            page.update()
+                                            if AudioControl:
+                                                audio_player = AudioControl(autoplay=False)
+                                                audio_player.on_state_changed = on_audio_state_changed
+                                                page.overlay.append(audio_player)
+                                                page.update()
                                             
-                                        # Use Flet's internal asset routing directly!
-                                        audio_player.src = play_target_filename
-                                        audio_player.src_base64 = None
-                                        page.update()
-                                        audio_player.update()
-                                        audio_player.play()
+                                        if audio_player:
+                                            # Use Flet's internal asset routing directly
+                                            audio_player.src = play_target_filename
+                                            try: audio_player.src_base64 = None
+                                            except: pass
+                                            page.update()
+                                            audio_player.update()
+                                            audio_player.play()
+                                        else:
+                                            show_snack("Audio Engine Missing!", ft.Colors.RED)
                                     except Exception as e:
-                                        show_snack("Flet-Audio plugin encountered an error playing audio!", ft.Colors.RED)
+                                        show_snack(f"Flet Audio Error: {e}", ft.Colors.RED)
 
                             if record_video and is_cached:
                                 status_msg = "🔴 Recording Video (Audio from Cache)..."
