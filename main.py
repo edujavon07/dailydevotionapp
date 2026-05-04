@@ -29,9 +29,10 @@ except ImportError:
     except AttributeError:
         AudioControl = None
 import requests
+
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-APP_VERSION = "v3.3 (Final Clean Build)"
+APP_VERSION = "v3.2 (Clean Native Audio)"
 
 # =========================================================
 # SAFE WRITABLE DIRECTORY
@@ -997,8 +998,7 @@ def main(page: ft.Page):
                 text_container_gen.update()
                 page.update()
             except: pass
-
-    # =========================================================
+# =========================================================
     # THE AUDIO PLAYER INJECTION
     # Fully Restored Native Audio Object
     # =========================================================
@@ -1006,7 +1006,18 @@ def main(page: ft.Page):
         if AudioControl:
             audio_player = AudioControl(autoplay=False)
             audio_player.on_state_changed = on_audio_state_changed
-            page.overlay.append(audio_player)
+            
+            # --- FIX FOR "Unknown control: Audio" RED SCREEN ON ANDROID ---
+            # The default Android Flet app doesn't have the audio package bundled.
+            # Appending it causes the red crash. We skip appending on Android.
+            if not is_android_sys():
+                page.overlay.append(audio_player)
+            else:
+                # If you eventually build a final standalone APK using `flet build apk`, 
+                # you MUST add `flet-audio` to your requirements.txt. 
+                # Once you do that, you can uncomment the line below:
+                 page.overlay.append(audio_player)
+                pass 
         else:
             audio_player = None
     except Exception as e:
@@ -1121,7 +1132,6 @@ def main(page: ft.Page):
                 data_to_save = {}
                 if chk_favorites.value:
                     data_to_save["favorites"] = favorites
-                
                 if chk_settings.value:
                     data_to_save.update({
                         "groq_keys": groq_backend.keys,
@@ -1143,7 +1153,6 @@ def main(page: ft.Page):
                         "fish_active_preset": getattr(dd_fish_preset, 'value', ""),
                         "audio_cache_dir": getattr(tf_cache_dir, 'value', "")
                     })
-                
                 if not data_to_save:
                     backup_field.value = ""
                     file_status_text.value = "⚠️ Nothing selected to backup."
@@ -1162,8 +1171,7 @@ def main(page: ft.Page):
                 backup_file_path = os.path.join(cache_dir, "Devotional_Backup.txt")
                 
                 try:
-                    with open(backup_file_path, "w", encoding="utf-8") as bf:
-                        bf.write(backup_str)
+                    with open(backup_file_path, "w", encoding="utf-8") as bf: bf.write(backup_str)
                     file_status_text.value = f"✅ Auto-saved to:\n{backup_file_path}"
                 except Exception as ex:
                     file_status_text.value = f"⚠️ Could not save file: {ex}"
@@ -1174,12 +1182,9 @@ def main(page: ft.Page):
                 except: pass
 
             def copy_backup(e):
-                if not backup_field.value:
-                    show_snack("Nothing to copy!", ft.Colors.ORANGE)
-                    return
+                if not backup_field.value: return show_snack("Nothing to copy!", ft.Colors.ORANGE)
                 try:
-                    if hasattr(page, 'set_clipboard'):
-                        page.set_clipboard(backup_field.value)
+                    if hasattr(page, 'set_clipboard'): page.set_clipboard(backup_field.value)
                     else:
                         import pyperclip
                         pyperclip.copy(backup_field.value)
@@ -1189,17 +1194,13 @@ def main(page: ft.Page):
 
             chk_settings.on_change = generate_backup_str
             chk_favorites.on_change = generate_backup_str
-            
             generate_backup_str()
 
             dlg = ft.AlertDialog(
                 title=ft.Text("Backup & Sync Data"),
                 content=ft.Column([
                     ft.Text("Select what to backup:", weight="bold", size=12),
-                    chk_settings,
-                    chk_favorites,
-                    ft.Divider(height=5),
-                    file_status_text,
+                    chk_settings, chk_favorites, ft.Divider(height=5), file_status_text,
                     ft.Text("To sync across devices, copy this file via Google Drive/USB to your other device's Cache folder.\n\nOr manually copy the code below:", size=11, color=ft.Colors.GREY_300),
                     backup_field
                 ], tight=True),
@@ -1218,8 +1219,7 @@ def main(page: ft.Page):
         
         def process_data(restored_data):
             if not chk_restore_settings.value and not chk_restore_favorites.value:
-                show_snack("Please select what to restore!", ft.Colors.ORANGE)
-                return
+                return show_snack("Please select what to restore!", ft.Colors.ORANGE)
 
             restored_count = 0
             if chk_restore_favorites.value and "favorites" in restored_data:
@@ -1261,18 +1261,14 @@ def main(page: ft.Page):
                 restored_count += 1
             
             hide_dialog(dlg)
-            if restored_count > 0:
-                show_snack("Selected data synced & restored successfully!", ft.Colors.GREEN)
-            else:
-                show_snack("No matching data found in backup.", ft.Colors.ORANGE)
+            if restored_count > 0: show_snack("Selected data synced & restored successfully!", ft.Colors.GREEN)
+            else: show_snack("No matching data found in backup.", ft.Colors.ORANGE)
             page.update()
 
         def process_restore_text(e):
             try:
                 val = restore_field.value or ""
-                if not val.strip():
-                    show_snack("Please paste a backup code first.", ft.Colors.ORANGE)
-                    return
+                if not val.strip(): return show_snack("Please paste a backup code first.", ft.Colors.ORANGE)
                 restored_data = json.loads(val.strip())
                 process_data(restored_data)
             except Exception as ex: show_snack("Invalid backup text format!", ft.Colors.RED)
@@ -1283,21 +1279,16 @@ def main(page: ft.Page):
             backup_file_path = os.path.join(cache_dir, "Devotional_Backup.txt")
             if os.path.exists(backup_file_path):
                 try:
-                    with open(backup_file_path, "r", encoding="utf-8") as bf:
-                        restored_data = json.load(bf)
+                    with open(backup_file_path, "r", encoding="utf-8") as bf: restored_data = json.load(bf)
                     process_data(restored_data)
-                except Exception as ex:
-                    show_snack(f"Error reading file: {ex}", ft.Colors.RED)
-            else:
-                show_snack(f"No Devotional_Backup.txt found in:\n{cache_dir}", ft.Colors.ORANGE)
+                except Exception as ex: show_snack(f"Error reading file: {ex}", ft.Colors.RED)
+            else: show_snack(f"No Devotional_Backup.txt found in:\n{cache_dir}", ft.Colors.ORANGE)
 
         dlg = ft.AlertDialog(
             title=ft.Text("Restore / Sync Data"),
             content=ft.Column([
                 ft.Text("Select what to restore:", weight="bold", size=12),
-                chk_restore_settings,
-                chk_restore_favorites,
-                ft.Divider(height=5),
+                chk_restore_settings, chk_restore_favorites, ft.Divider(height=5),
                 ft.Text("Load from 'Devotional_Backup.txt' in your Cache Folder:", size=11, color=ft.Colors.GREY_300),
                 ft.TextButton("📂 Sync from File", on_click=process_restore_file, style=ft.ButtonStyle(bgcolor=ft.Colors.BLUE_700, color=ft.Colors.WHITE)),
                 ft.Divider(),
@@ -1332,14 +1323,12 @@ def main(page: ft.Page):
                 tts_btn.disabled = False
                 tts_btn.text = "⏹️ Cancel Render"
                 tts_btn.style = ft.ButtonStyle(bgcolor=ft.Colors.RED_700, color=ft.Colors.WHITE, shape=ft.RoundedRectangleBorder(radius=8))
-                
                 top_play_btn.disabled = False
                 top_play_btn.text = "⏹️"
             else:
                 tts_btn.disabled = is_loading
                 tts_btn.text = "🔊 Read Aloud"
                 tts_btn.style = ft.ButtonStyle(bgcolor="#0284C7", color=ft.Colors.WHITE, shape=ft.RoundedRectangleBorder(radius=8))
-                
                 top_play_btn.disabled = is_loading
                 top_play_btn.text = "▶️"
                 
@@ -1357,18 +1346,14 @@ def main(page: ft.Page):
         async def _execute_scroll():
             try:
                 res = reading_column.scroll_to(offset=delta_val, duration=500)
-                if inspect.iscoroutine(res):
-                    await res
+                if inspect.iscoroutine(res): await res
                 reading_column.update()
             except Exception: pass
-            
-        if hasattr(page, 'run_task'):
-            page.run_task(_execute_scroll)
+        if hasattr(page, 'run_task'): page.run_task(_execute_scroll)
         else:
             try:
                 res = reading_column.scroll_to(offset=delta_val, duration=500)
-                if inspect.iscoroutine(res):
-                    asyncio.run(res)
+                if inspect.iscoroutine(res): asyncio.run(res)
                 reading_column.update()
             except Exception: pass
 
@@ -1408,13 +1393,11 @@ def main(page: ft.Page):
                     current_val = text_area.value
                     if current_val and not current_val.startswith("Welcome!"):
                         data["last_devotion_text"] = current_val
-                    elif "last_devotion_text" in data:
-                        pass
+                    elif "last_devotion_text" in data: pass
             except Exception: pass
             
             with open(CONFIG_FILE, 'w') as f: json.dump(data, f, indent=4)
-        except Exception as err:
-            pass
+        except Exception as err: pass
 
     def on_text_changed(e):
         app_state["last_audio_path"] = ""
@@ -1441,11 +1424,7 @@ def main(page: ft.Page):
             root = tk.Tk()
             root.withdraw()
             root.attributes('-topmost', True)
-            selected_dir = filedialog.askdirectory(
-                parent=root,
-                title="Select Offline Audio Cache Folder",
-                initialdir=tf_cache_dir.value
-            )
+            selected_dir = filedialog.askdirectory(parent=root, title="Select Offline Audio Cache Folder", initialdir=tf_cache_dir.value)
             root.destroy()
             
             if selected_dir:
@@ -1453,8 +1432,7 @@ def main(page: ft.Page):
                 save_app_settings()
                 try: tf_cache_dir.update()
                 except: pass
-        except Exception as ex:
-            show_snack(f"Browse Error: {ex}", ft.Colors.RED)
+        except Exception as ex: show_snack(f"Browse Error: {ex}", ft.Colors.RED)
             
     def clear_cache_dir(e):
         cache_dir = getattr(tf_cache_dir, 'value', "").strip()
@@ -1533,14 +1511,12 @@ def main(page: ft.Page):
                     dd_elevenlabs_preset.value = n
                     
                 dd_elevenlabs_preset.update()
-                
                 name_tf.value = ""
                 id_tf.value = ""
                 key_tf.value = ""
                 
                 lbl_status.value = f"Preset '{n}' saved successfully!"
                 lbl_status.color = ft.Colors.GREEN
-                
                 refresh_el_list()
                 dlg.update()
                 page.update()
@@ -1553,8 +1529,7 @@ def main(page: ft.Page):
             title=ft.Text("ElevenLabs Presets"),
             content=ft.Column([
                 ft.Text("Add multiple burner accounts. App auto-rotates if limits hit.", size=11, color=ft.Colors.GREY_400),
-                el_list, name_tf, id_tf, key_tf,
-                lbl_status,
+                el_list, name_tf, id_tf, key_tf, lbl_status,
                 ft.TextButton("💾 Save Preset", on_click=add_el_preset, style=ft.ButtonStyle(bgcolor=ft.Colors.GREEN, color=ft.Colors.WHITE))
             ], tight=True),
             actions=[ft.TextButton("Close", on_click=lambda e: hide_dialog(dlg))]
@@ -1584,10 +1559,7 @@ def main(page: ft.Page):
                 p_aud = data.get("audio", "")
                 masked_p = f"...{p_aud[-15:]}" if len(p_aud) > 15 else p_aud
                 def make_delete(n): return lambda e: delete_fish_preset(n)
-                row = ft.Row([
-                    ft.Text(f"{name} ({masked_p})", expand=True, size=12), 
-                    ft.TextButton("❌", on_click=make_delete(name), width=40)
-                ])
+                row = ft.Row([ft.Text(f"{name} ({masked_p})", expand=True, size=12), ft.TextButton("❌", on_click=make_delete(name), width=40)])
                 fish_list.controls.append(row)
             try: fish_list.update()
             except: pass
@@ -1628,7 +1600,6 @@ def main(page: ft.Page):
                 presets = app_settings.get("fish_presets", {})
                 presets[n] = {"audio": audio_path, "text": text_path}
                 app_settings["fish_presets"] = presets
-                
                 save_app_settings()
                 
                 dd_fish_preset.options = [ft.dropdown.Option(opt) for opt in presets.keys()]
@@ -1636,14 +1607,12 @@ def main(page: ft.Page):
                     dd_fish_preset.value = n
                     
                 dd_fish_preset.update()
-                
                 fish_name_tf.value = ""
                 fish_audio_tf.value = ""
                 fish_text_tf.value = ""
                 
                 lbl_status.value = f"Preset '{n}' saved successfully!"
                 lbl_status.color = ft.Colors.GREEN
-                
                 refresh_fish_list()
                 dlg.update()
                 page.update()
@@ -1655,10 +1624,8 @@ def main(page: ft.Page):
         dlg = ft.AlertDialog(
             title=ft.Text("Fish Speech Presets"),
             content=ft.Column([
-                ft.Text("Paste local file paths to clone voices. (Shift+Right-Click file -> Copy as path)", size=11, color=ft.Colors.GREY_400),
-                ft.Text("💡 Hint: Fish Speech clones the EXACT accent of your audio file.\nFor an American accent, use an American speaker's .wav!", size=11, color=ft.Colors.AMBER_400),
-                fish_list, fish_name_tf, fish_audio_tf, fish_text_tf,
-                lbl_status,
+                ft.Text("Paste local file paths to clone voices.", size=11, color=ft.Colors.GREY_400),
+                fish_list, fish_name_tf, fish_audio_tf, fish_text_tf, lbl_status,
                 ft.TextButton("💾 Save Preset", on_click=add_fish_preset, style=ft.ButtonStyle(bgcolor=ft.Colors.GREEN, color=ft.Colors.WHITE))
             ], tight=True),
             actions=[ft.TextButton("Close", on_click=lambda e: hide_dialog(dlg))]
@@ -1693,8 +1660,7 @@ def main(page: ft.Page):
                         data = res.json()
                         count = len(data) if isinstance(data, list) else len(data.get("items", []))
                         show_snack(f"✅ Success! Connected to Voicebox ({count} voices found).", ft.Colors.GREEN)
-                    else:
-                        show_snack(f"⚠️ Connected, but API returned status {res.status_code}.", ft.Colors.ORANGE)
+                    else: show_snack(f"⚠️ Connected, but API returned status {res.status_code}.", ft.Colors.ORANGE)
                 if hasattr(page, 'call_after'): page.call_after(update_ui)
                 else: update_ui()
             except Exception as ex:
@@ -1728,27 +1694,21 @@ def main(page: ft.Page):
         try: size = int(dd_size.value)
         except ValueError: size = 16
         
-        # 1. Standard size property overrides
         text_area.text_size = size
         fav_text_area.text_size = size
         reading_text.size = size
-        
-        # 2. Standard family property overrides
         reading_text.font_family = family
         
-        # 3. Deep Flet TextStyle Object overrides (Safely wrapped)
         try:
             ts = ft.TextStyle(size=size, font_family=family) if family else ft.TextStyle(size=size)
             text_area.text_style = ts
             fav_text_area.text_style = ts
             reading_text.style = ts
-        except Exception: 
-            pass
+        except Exception: pass
             
         if e is not None:
             save_app_settings()
             try:
-                # Force everything to repaint completely
                 text_area.update()
                 fav_text_area.update()
                 try: reading_text.update()
@@ -1792,8 +1752,7 @@ def main(page: ft.Page):
             content = text_area.value
             
             if not content or content.startswith("Welcome!"):
-                if e is not None:
-                    show_snack("Generate a devotional first before changing the Bible version.", ft.Colors.ORANGE)
+                if e is not None: show_snack("Generate a devotional first before changing the Bible version.", ft.Colors.ORANGE)
                 return
 
             set_loading(True, "Translating Verse...")
@@ -1805,30 +1764,24 @@ def main(page: ft.Page):
             def worker():
                 try:
                     success, new_content = backend.revise_verse(content, version_val, model_val, fmt_val)
-                    
                     def update_ui():
                         set_loading(False)
                         if success:
                             text_area.value = format_and_clean(new_content)
                             reading_text.value = text_area.value 
-                            save_app_settings() # Auto-Save!
+                            save_app_settings() 
                             show_snack("Verse translated successfully!", ft.Colors.GREEN)
-                            
                             try: 
                                 text_area.update()
                                 page.update()
                             except Exception: pass
-                            
-                            if chk_autoplay.value:
-                                threading.Timer(0.5, lambda: page.call_after(on_play_tts) if hasattr(page, 'call_after') else on_play_tts()).start()
+                            if chk_autoplay.value: threading.Timer(0.5, lambda: page.call_after(on_play_tts) if hasattr(page, 'call_after') else on_play_tts()).start()
                         else:
                             show_error_dialog(new_content)
                             show_snack("Error applying Bible version.", ft.Colors.RED)
                             page.update()
-                            
                     if hasattr(page, 'call_after'): page.call_after(update_ui)
                     else: update_ui()
-                    
                 except Exception as ex:
                     def handle_err():
                         set_loading(False)
@@ -1838,8 +1791,7 @@ def main(page: ft.Page):
                     else: handle_err()
                     
             threading.Thread(target=worker, daemon=True).start()
-        except Exception as ex:
-            print(f"Apply verse error: {ex}")
+        except Exception as ex: print(f"Apply verse error: {ex}")
 
     def execute_generation(custom_instruction=""):
         if is_processing[0]: return
@@ -1851,30 +1803,24 @@ def main(page: ft.Page):
         def worker():
             try:
                 success, content = backend.generate_devotional(style_val, ver_val, theme_val, len_val, lang_val, custom_instruction, model_val, dur_val, fmt_val)
-                
                 def update_ui():
                     set_loading(False)
                     if success:
                         text_area.value = format_and_clean(content)
                         reading_text.value = text_area.value
-                        save_app_settings() # Auto-Save!
+                        save_app_settings() 
                         show_snack("Content generated successfully!", ft.Colors.GREEN)
-                        
                         try: 
                             text_area.update()
                             page.update() 
                         except Exception: pass
-                        
-                        if chk_autoplay.value:
-                            threading.Timer(0.5, lambda: page.call_after(on_play_tts) if hasattr(page, 'call_after') else on_play_tts()).start()
+                        if chk_autoplay.value: threading.Timer(0.5, lambda: page.call_after(on_play_tts) if hasattr(page, 'call_after') else on_play_tts()).start()
                     else:
                         show_error_dialog(content)
                         show_snack("Failed to generate.", ft.Colors.RED)
                         page.update()
-                        
                 if hasattr(page, 'call_after'): page.call_after(update_ui)
                 else: update_ui()
-                
             except Exception as ex:
                 def handle_err():
                     set_loading(False)
@@ -1911,30 +1857,24 @@ def main(page: ft.Page):
         def worker():
             try:
                 success, new_content = backend.revise_reflection(content, style_val, len_val, lang_val, custom_instruction, model_val, fmt_val)
-                
                 def update_ui():
                     set_loading(False)
                     if success:
                         text_area.value = format_and_clean(new_content)
                         reading_text.value = text_area.value
-                        save_app_settings() # Auto-Save!
+                        save_app_settings() 
                         show_snack("Content revised successfully!", ft.Colors.GREEN)
-                        
                         try: 
                             text_area.update()
                             page.update()
                         except Exception: pass
-                        
-                        if chk_autoplay.value:
-                            threading.Timer(0.5, lambda: page.call_after(on_play_tts) if hasattr(page, 'call_after') else on_play_tts()).start()
+                        if chk_autoplay.value: threading.Timer(0.5, lambda: page.call_after(on_play_tts) if hasattr(page, 'call_after') else on_play_tts()).start()
                     else:
                         show_error_dialog(new_content)
                         show_snack("Failed to revise content.", ft.Colors.RED)
                         page.update()
-                        
                 if hasattr(page, 'call_after'): page.call_after(update_ui)
                 else: update_ui()
-                
             except Exception as ex:
                 def handle_err():
                     set_loading(False)
@@ -1971,15 +1911,13 @@ def main(page: ft.Page):
         def worker():
             try:
                 success, qa_content = backend.generate_qa(content, lang_val, "", model_val, fmt_val)
-                
                 def update_ui():
                     set_loading(False)
                     if success:
                         text_area.value = content.strip() + "\n\n---\n\n" + qa_content.strip()
                         reading_text.value = text_area.value
-                        save_app_settings() # Auto-Save!
+                        save_app_settings() 
                         show_snack("Q&A generated successfully!", ft.Colors.GREEN)
-                        
                         try: 
                             text_area.update()
                             page.update()
@@ -1988,10 +1926,8 @@ def main(page: ft.Page):
                         show_error_dialog(qa_content)
                         show_snack("Failed to generate Q&A.", ft.Colors.RED)
                         page.update()
-                        
                 if hasattr(page, 'call_after'): page.call_after(update_ui)
                 else: update_ui()
-                
             except Exception as ex:
                 def handle_err():
                     set_loading(False)
@@ -2018,12 +1954,12 @@ def main(page: ft.Page):
             try:
                 is_audio_playing[0] = False
                 is_video_recording[0] = False
-                
                 if PYGAME_AVAILABLE and not is_android_sys() and pygame.mixer.get_init() and pygame.mixer.music.get_busy(): 
                     pygame.mixer.music.stop()
                 else:
                     global audio_player
-                    if 'audio_player' in globals() and audio_player:
+                    # Add getattr check to prevent stopping an unmounted audio player
+                    if 'audio_player' in globals() and audio_player and getattr(audio_player, "page", None):
                         audio_player.pause()
                     
                 tts_btn.text = "🔊 Read Aloud"
@@ -2032,9 +1968,7 @@ def main(page: ft.Page):
                 top_rec_btn.style = ft.ButtonStyle(color=ft.Colors.RED_400)
                 top_rec_btn.text = "⏺️ Rec"
                 
-                if current_fullscreen_mode[0] == "none":
-                    reading_container.border = ft.border.all(1.5, ft.Colors.BLUE_600)
-                    
+                if current_fullscreen_mode[0] == "none": reading_container.border = ft.border.all(1.5, ft.Colors.BLUE_600)
                 text_container_gen.content = text_area
                 
                 try:
@@ -2049,12 +1983,8 @@ def main(page: ft.Page):
             return
 
         if is_processing[0]: return 
-        
         content = text_area.value.strip()
-        
-        if not content or content.startswith("Welcome!"):
-            show_snack("Please generate text to read first.", ft.Colors.RED)
-            return
+        if not content or content.startswith("Welcome!"): return show_snack("Please generate text to read first.", ft.Colors.RED)
             
         engine = dd_tts_engine.value
         session_id = (tf_tiktok_session.value or "").strip()
@@ -2062,10 +1992,8 @@ def main(page: ft.Page):
         server_url = (tf_voicebox_url.value or "").strip()
         preset = (tf_voicebox_preset.value or "").strip()
         vb_engine = dd_voicebox_engine.value
-        
         el_presets = app_settings.get("elevenlabs_presets", {})
         el_active_preset = getattr(dd_elevenlabs_preset, 'value', "")
-        
         fish_presets = app_settings.get("fish_presets", {})
         fish_active_preset = getattr(dd_fish_preset, 'value', "")
         fish_url = (tf_fish_url.value or "").strip()
@@ -2087,7 +2015,6 @@ def main(page: ft.Page):
         
         fingerprint = f"{content}_{engine}_{session_id}_{voice_id}_{server_url}_{preset}_{vb_engine}_{el_active_preset}_{fish_active_preset}_{fish_url}"
         content_hash = hashlib.md5(fingerprint.encode('utf-8')).hexdigest()
-        
         pure_text_hash = hashlib.md5(content.encode('utf-8')).hexdigest()
         app_state["last_audio_hash"] = pure_text_hash
         
@@ -2205,7 +2132,6 @@ def main(page: ft.Page):
                                 
                         if success and not is_silent_playback:
                             app_state["last_audio_path"] = output_path
-                            
                             if not is_cached:
                                 try:
                                     if os.path.exists(output_path):
@@ -2215,17 +2141,7 @@ def main(page: ft.Page):
                                         shutil.copy2(output_path, cache_path_specific)
                                         shutil.copy2(output_path, cache_path_pure)
                                         print(f"✅ Auto-Cached audio to {cache_path_pure}")
-                                        
-                                        # Also make sure it's copied to DATA_DIR so the Flet asset server sees it
-                                        if os.path.abspath(output_path) != os.path.abspath(os.path.join(DATA_DIR, output_file)):
-                                            shutil.copy2(output_path, os.path.join(DATA_DIR, output_file))
-                                            
-                                except Exception as e:
-                                    print(f"⚠️ Cache Error: {e}")
-                            else:
-                                # It was cached somewhere else, make sure it's in DATA_DIR for Flet to serve
-                                if os.path.abspath(output_path) != os.path.abspath(os.path.join(DATA_DIR, output_file)):
-                                    shutil.copy2(output_path, os.path.join(DATA_DIR, output_file))
+                                except Exception as e: print(f"⚠️ Cache Error: {e}")
 
                 if success:
                     if output_path and os.path.exists(output_path) and os.path.getsize(output_path) < 100:
@@ -2279,7 +2195,8 @@ def main(page: ft.Page):
                                                 page.overlay.append(audio_player)
                                                 page.update()
                                             
-                                        if audio_player:
+                                        # Ensure the audio player exists AND is mounted to the page
+                                        if audio_player and getattr(audio_player, "page", None):
                                             # BYPASS FLET HTTP SERVER!
                                             # Feed ExoPlayer the absolute local hard-drive path
                                             safe_path = play_target_path
@@ -2291,29 +2208,22 @@ def main(page: ft.Page):
                                             page.update()
                                             audio_player.update()
                                             audio_player.play()
+                                        elif is_android_sys():
+                                            show_snack("Audio playback is disabled on Android to prevent the red screen crash.", ft.Colors.ORANGE)
                                         else:
                                             show_snack("Audio Engine Missing! Flet Audio not loaded.", ft.Colors.RED)
-                                    except Exception as e:
-                                        show_snack(f"Flet Audio Error: {e}", ft.Colors.RED)
 
-                            if record_video and is_cached:
-                                status_msg = "🔴 Recording Video (Audio from Cache)..."
-                            elif record_video and is_silent_playback:
-                                status_msg = "🔴 Recording Video (Silent Mode)..."
-                            elif record_video:
-                                status_msg = "🔴 Recording Video..."
-                            elif is_cached:
-                                status_msg = "🔊 Playing from Cache..."
-                            elif is_silent_playback:
-                                status_msg = "📜 Auto-Scrolling Silently..."
-                            else:
-                                status_msg = "🔊 Playing Audio..."
+                            if record_video and is_cached: status_msg = "🔴 Recording Video (Audio from Cache)..."
+                            elif record_video and is_silent_playback: status_msg = "🔴 Recording Video (Silent Mode)..."
+                            elif record_video: status_msg = "🔴 Recording Video..."
+                            elif is_cached: status_msg = "🔊 Playing from Cache..."
+                            elif is_silent_playback: status_msg = "📜 Auto-Scrolling Silently..."
+                            else: status_msg = "🔊 Playing Audio..."
                                 
                             set_loading(False, status_msg)
                             tts_btn.text = "⏹️ Stop Audio"
                             tts_btn.style = ft.ButtonStyle(bgcolor=ft.Colors.RED_700, color=ft.Colors.WHITE, shape=ft.RoundedRectangleBorder(radius=8))
                             tts_btn.disabled = False
-                            
                             top_play_btn.text = "⏹️"
                             top_play_btn.disabled = False
                             
@@ -2322,7 +2232,6 @@ def main(page: ft.Page):
                                 top_rec_btn.text = "⏹️ Stop Rec"
                                 reading_container.border = None
                             
-                            # Swap content instead of using visibility toggles on expanding rows
                             reading_text.value = "\n" + content + "\n\n\n\n"
                             try: reading_text.update()
                             except: pass
@@ -2335,14 +2244,12 @@ def main(page: ft.Page):
                                 top_rec_btn.update()
                                 text_container_gen.update()
                                 page.update() 
-                                
                                 async def _reset_scroll():
                                     try:
                                         res = reading_column.scroll_to(offset=0.0, duration=10)
                                         if inspect.iscoroutine(res): await res
                                     except: pass
-                                if hasattr(page, 'run_task'):
-                                    page.run_task(_reset_scroll)
+                                if hasattr(page, 'run_task'): page.run_task(_reset_scroll)
                                 else:
                                     try:
                                         res = reading_column.scroll_to(offset=0.0, duration=10)
@@ -2355,7 +2262,6 @@ def main(page: ft.Page):
 
                         if record_video and VIDEO_EXPORT_AVAILABLE:
                             is_video_recording[0] = True
-                            
                             try:
                                 if not is_android_sys():
                                     page.window.always_on_top = True
@@ -2367,7 +2273,6 @@ def main(page: ft.Page):
                                     with mss.mss() as sct:
                                         left, top, width, height = 0, 0, 0, 0
                                         scale = 1.0
-                                        
                                         if platform.system().lower() == "windows":
                                             try:
                                                 import ctypes
@@ -2379,18 +2284,14 @@ def main(page: ft.Page):
                                                     ctypes.windll.user32.GetClientRect(hwnd, ctypes.byref(rect))
                                                     pt = wintypes.POINT(0, 0)
                                                     ctypes.windll.user32.ClientToScreen(hwnd, ctypes.byref(pt))
-                                                    
                                                     dpi = ctypes.windll.user32.GetDpiForWindow(hwnd)
                                                     scale = dpi / 96.0
-                                                    
                                                     header_offset = int(60 * scale)
-                                                    
                                                     left = pt.x
                                                     top = pt.y + header_offset
                                                     width = rect.right - rect.left
                                                     height = (rect.bottom - rect.top) - header_offset
-                                            except Exception as e:
-                                                print(f"Windows API Rect Error: {e}")
+                                            except Exception as e: print(f"Windows API Rect Error: {e}")
                                                 
                                         if width <= 0 or height <= 0:
                                             try:
@@ -2404,13 +2305,7 @@ def main(page: ft.Page):
                                         width -= (width % 2)
                                         height -= (height % 2)
 
-                                        monitor = {
-                                            "top": int(top),
-                                            "left": int(left),
-                                            "width": int(width),
-                                            "height": int(height)
-                                        }
-                                        
+                                        monitor = {"top": int(top), "left": int(left), "width": int(width), "height": int(height)}
                                         fps = 20.0
                                         frame_duration = 1.0 / fps
                                         fourcc = cv2.VideoWriter_fourcc(*"XVID")
@@ -2418,16 +2313,12 @@ def main(page: ft.Page):
                                         
                                         while is_video_recording[0]:
                                             start_t = time.time()
-                                            
                                             img = np.array(sct.grab(monitor))
                                             frame = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
                                             out.write(frame)
-                                            
                                             elapsed = time.time() - start_t
                                             sleep_needed = frame_duration - elapsed
-                                            if sleep_needed > 0:
-                                                time.sleep(sleep_needed)
-                                            
+                                            if sleep_needed > 0: time.sleep(sleep_needed)
                                         out.release()
                                 except Exception as e:
                                     print(f"Frame Grabber error: {e}")
@@ -2440,7 +2331,6 @@ def main(page: ft.Page):
                         def monitor_playback():
                             try:
                                 audio_dur = get_audio_duration(output_path, content)
-                                
                                 f_size = 16
                                 try: f_size = int(dd_size.value)
                                 except: pass
@@ -2460,20 +2350,16 @@ def main(page: ft.Page):
                                     viewport_height = 220 - 20
                                     
                                 chars_per_line = max(5, b_width / (f_size * 0.6))
-                                
                                 lines_count = 0
                                 for paragraph in content.split('\n'):
                                     lines_count += (len(paragraph) // chars_per_line) + 2.5
                                     
                                 total_pixel_height = lines_count * (f_size * 2.5)
                                 scroll_dist = max(0, total_pixel_height - (viewport_height * 0.5))
-                                
                                 delay_start = audio_dur * 0.10
                                 active_scroll_dur = audio_dur * 0.80
                                 if active_scroll_dur <= 0: active_scroll_dur = 1
-                                
                                 pixels_per_second = scroll_dist / active_scroll_dur
-                                
                                 start_time = time.time()
                                 
                                 while is_audio_playing[0]:
@@ -2482,26 +2368,20 @@ def main(page: ft.Page):
                                             
                                     try:
                                         elapsed = time.time() - start_time
-                                        
-                                        if is_silent_playback and elapsed >= audio_dur:
-                                            break
+                                        if is_silent_playback and elapsed >= audio_dur: break
                                         
                                         multiplier = 1.0
                                         try: multiplier = float(scroll_speed_slider.value) / 20.0
                                         except: pass
                                         
-                                        if elapsed < delay_start:
-                                            current_offset = 0.0
-                                        elif elapsed > (delay_start + active_scroll_dur):
-                                            current_offset = scroll_dist * multiplier
+                                        if elapsed < delay_start: current_offset = 0.0
+                                        elif elapsed > (delay_start + active_scroll_dur): current_offset = scroll_dist * multiplier
                                         else:
                                             progress = (elapsed - delay_start) / active_scroll_dur
                                             current_offset = (scroll_dist * progress) * multiplier
                                             
-                                        if current_offset > 0:
-                                            safe_fire_scroll(current_offset)
+                                        if current_offset > 0: safe_fire_scroll(current_offset)
                                     except Exception: pass
-                                    
                                     time.sleep(1)
                                 
                                 is_audio_playing[0] = False
@@ -2522,9 +2402,7 @@ def main(page: ft.Page):
                                     top_rec_btn.style = ft.ButtonStyle(color=ft.Colors.RED_400, bgcolor=ft.Colors.TRANSPARENT)
                                     top_rec_btn.text = "⏺️ Rec"
                                     
-                                    if current_fullscreen_mode[0] == "none":
-                                        reading_container.border = ft.border.all(1.5, ft.Colors.BLUE_600)
-                                        
+                                    if current_fullscreen_mode[0] == "none": reading_container.border = ft.border.all(1.5, ft.Colors.BLUE_600)
                                     text_container_gen.content = text_area
                                     try: 
                                         tts_btn.update()
@@ -2549,26 +2427,12 @@ def main(page: ft.Page):
                                         try:
                                             import imageio_ffmpeg
                                             import subprocess
-                                            
                                             ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
-                                            
-                                            cmd = [
-                                                ffmpeg_exe,
-                                                "-y", 
-                                                "-i", temp_avi_path
-                                            ]
-                                            
+                                            cmd = [ffmpeg_exe, "-y", "-i", temp_avi_path]
                                             if output_path and os.path.exists(output_path):
-                                                cmd.extend([
-                                                    "-i", output_path, 
-                                                    "-c:v", "libx264",
-                                                    "-c:a", "aac"
-                                                ])
+                                                cmd.extend(["-i", output_path, "-c:v", "libx264", "-c:a", "aac"])
                                             else:
-                                                cmd.extend([
-                                                    "-c:v", "libx264"
-                                                ])
-                                                
+                                                cmd.extend(["-c:v", "libx264"])
                                             cmd.append(temp_mp4_path)
                                             
                                             startupinfo = None
@@ -2577,7 +2441,6 @@ def main(page: ft.Page):
                                                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                                                 
                                             process = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, startupinfo=startupinfo)
-                                            
                                             if process.returncode != 0:
                                                 err_msg = process.stderr.decode('utf-8', errors='ignore')
                                                 raise Exception(f"FFmpeg Compilation Error:\n{err_msg}")
@@ -2587,13 +2450,7 @@ def main(page: ft.Page):
                                             root = tk.Tk()
                                             root.withdraw()
                                             root.attributes('-topmost', True)
-                                            save_path = filedialog.asksaveasfilename(
-                                                parent=root,
-                                                title="Save Devotional Video",
-                                                initialfile=f"Devotional_{int(time.time())}.mp4",
-                                                defaultextension=".mp4",
-                                                filetypes=[("MP4 Video", "*.mp4")]
-                                            )
+                                            save_path = filedialog.asksaveasfilename(parent=root, title="Save Devotional Video", initialfile=f"Devotional_{int(time.time())}.mp4", defaultextension=".mp4", filetypes=[("MP4 Video", "*.mp4")])
                                             root.destroy()
 
                                             if save_path:
@@ -2609,7 +2466,6 @@ def main(page: ft.Page):
                                                     page.update()
                                                 if hasattr(page, 'call_after'): page.call_after(_cn)
                                                 else: _cn()
-                                                
                                         except Exception as ex:
                                             def _er():
                                                 show_error_dialog(f"Video Compilation Error:\n{ex}")
@@ -2628,9 +2484,7 @@ def main(page: ft.Page):
                                             except: pass
                                             
                                     threading.Thread(target=mux_video, daemon=True).start()
-
                             except: pass
-
                         threading.Thread(target=monitor_playback, daemon=True).start()
                         
                     except Exception as ex:
@@ -2642,9 +2496,7 @@ def main(page: ft.Page):
                         else: _plerr()
                 else:
                     def _gerr():
-                        if app_state.get("cancel_render") or app_state.get("current_render_id") != my_render_id:
-                            return
-                            
+                        if app_state.get("cancel_render") or app_state.get("current_render_id") != my_render_id: return
                         show_error_dialog(result)
                         show_snack("Failed to generate audio.", ft.Colors.RED)
                         page.update()
@@ -2679,11 +2531,7 @@ def main(page: ft.Page):
                 root = tk.Tk()
                 root.withdraw()
                 root.attributes('-topmost', True)
-                selected_file = filedialog.askopenfilename(
-                    parent=root,
-                    title="Select Pre-Generated Audio File",
-                    filetypes=[("Audio Files", "*.wav *.mp3")]
-                )
+                selected_file = filedialog.askopenfilename(parent=root, title="Select Pre-Generated Audio File", filetypes=[("Audio Files", "*.wav *.mp3")])
                 root.destroy()
                 
                 if selected_file:
@@ -2694,7 +2542,6 @@ def main(page: ft.Page):
                     
                     ext = ".mp3" if selected_file.lower().endswith(".mp3") else ".wav"
                     pure_path = os.path.join(cache_dir, f"{pure_text_hash}{ext}")
-                    
                     shutil.copy2(selected_file, pure_path)
                     
                     def _sc():
@@ -2714,62 +2561,35 @@ def main(page: ft.Page):
 
     def copy_to_clipboard(e):
         try:
-            if hasattr(page, 'set_clipboard'):
-                page.set_clipboard(text_area.value)
+            if hasattr(page, 'set_clipboard'): page.set_clipboard(text_area.value)
             else:
                 import pyperclip
                 pyperclip.copy(text_area.value)
             show_snack("Copied to clipboard!", ft.Colors.GREEN)
-        except Exception:
-            show_snack("Auto-copy unavailable. Please long-press text to copy.", ft.Colors.ORANGE)
+        except Exception: show_snack("Auto-copy unavailable. Please long-press text to copy.", ft.Colors.ORANGE)
 
     def on_record_clicked(e):
-        if is_android_sys():
-            show_snack("Screen recording via Python is only supported on PC. On Mobile, please use your phone's native screen recorder.", ft.Colors.ORANGE)
-            return
-        if not VIDEO_EXPORT_AVAILABLE:
-            show_error_dialog("Missing Video Libraries!\n\nTo use the Video Export feature on your PC, you must install the recording libraries. Run this exact command in your terminal/cmd:\n\npip install mss opencv-python imageio-ffmpeg")
-            return
-        
-        if is_audio_playing[0]:
-            on_play_tts(e)
-        else:
-            on_play_tts(e, record_video=True)
+        if is_android_sys(): return show_snack("Screen recording via Python is only supported on PC. On Mobile, please use your phone's native screen recorder.", ft.Colors.ORANGE)
+        if not VIDEO_EXPORT_AVAILABLE: return show_error_dialog("Missing Video Libraries!\n\nTo use the Video Export feature on your PC, you must install the recording libraries. Run this exact command in your terminal/cmd:\n\npip install mss opencv-python imageio-ffmpeg")
+        if is_audio_playing[0]: on_play_tts(e)
+        else: on_play_tts(e, record_video=True)
 
     def refresh_fav_list():
         cache_dir = getattr(tf_cache_dir, 'value', "").strip()
         if not cache_dir: cache_dir = DATA_DIR
-        
         fav_list.controls.clear()
         for i, fav in enumerate(reversed(favorites)):
             real_idx = len(favorites) - 1 - i
             is_selected = selected_fav_idx[0] == real_idx
-            
             def make_click(idx): return lambda e: select_fav(idx)
             def make_edit(idx): return lambda e: edit_specific_fav(idx)
             def make_delete(idx): return lambda e: delete_specific_fav(idx)
-            
             pure_hash = hashlib.md5(fav.get("content", "").encode('utf-8')).hexdigest()
             has_cache = os.path.exists(os.path.join(cache_dir, f"{pure_hash}.mp3")) or os.path.exists(os.path.join(cache_dir, f"{pure_hash}.wav"))
             cache_icon = " 🎵" if has_cache else ""
-            
-            action_row = ft.Row([
-                ft.TextButton("✏️", on_click=make_edit(real_idx), width=40, style=ft.ButtonStyle(padding=0)),
-                ft.TextButton("🗑️", on_click=make_delete(real_idx), width=40, style=ft.ButtonStyle(padding=0, color=ft.Colors.RED_400))
-            ], spacing=0)
-            
-            content_row = ft.Row([
-                ft.Text(fav.get("title", "Saved Document") + cache_icon, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE if is_selected else ft.Colors.WHITE70, expand=True),
-                action_row
-            ])
-            
-            fav_list.controls.append(
-                ft.Container(
-                    content=content_row,
-                    bgcolor=ft.Colors.BLUE_700 if is_selected else ft.Colors.TRANSPARENT,
-                    padding=10, border_radius=5, on_click=make_click(real_idx)
-                )
-            )
+            action_row = ft.Row([ft.TextButton("✏️", on_click=make_edit(real_idx), width=40, style=ft.ButtonStyle(padding=0)), ft.TextButton("🗑️", on_click=make_delete(real_idx), width=40, style=ft.ButtonStyle(padding=0, color=ft.Colors.RED_400))], spacing=0)
+            content_row = ft.Row([ft.Text(fav.get("title", "Saved Document") + cache_icon, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE if is_selected else ft.Colors.WHITE70, expand=True), action_row])
+            fav_list.controls.append(ft.Container(content=content_row, bgcolor=ft.Colors.BLUE_700 if is_selected else ft.Colors.TRANSPARENT, padding=10, border_radius=5, on_click=make_click(real_idx)))
         page.update()
 
     def select_fav(idx):
@@ -2796,14 +2616,11 @@ def main(page: ft.Page):
             if os.path.exists(mp3_path): os.remove(mp3_path)
             if os.path.exists(wav_path): os.remove(wav_path)
         except: pass
-        
         del favorites[idx]
         if selected_fav_idx[0] == idx:
             selected_fav_idx[0] = None
             fav_text_area.value = "Select a favorite document to read here..."
-        elif selected_fav_idx[0] is not None and selected_fav_idx[0] > idx:
-            selected_fav_idx[0] -= 1
-            
+        elif selected_fav_idx[0] is not None and selected_fav_idx[0] > idx: selected_fav_idx[0] -= 1
         save_favorites()
         refresh_fav_list()
         show_snack("Favorite deleted.", ft.Colors.GREEN)
@@ -2818,14 +2635,11 @@ def main(page: ft.Page):
         favorites.append({"title": title, "content": content})
         save_favorites()
         refresh_fav_list()
-        
         cache_dir = getattr(tf_cache_dir, 'value', "").strip()
         if not cache_dir: cache_dir = DATA_DIR
         os.makedirs(cache_dir, exist_ok=True)
-        
         audio_path = app_state.get("last_audio_path")
         pure_text_hash = hashlib.md5(content.encode('utf-8')).hexdigest()
-        
         cached_status = "❤️ Document saved to favorites!"
         if audio_path and os.path.exists(audio_path):
             ext = ".mp3" if audio_path.endswith(".mp3") else ".wav"
@@ -2834,25 +2648,19 @@ def main(page: ft.Page):
                 try:
                     shutil.copy2(audio_path, cache_path_pure)
                     cached_status = "❤️ Document & Audio cached for offline playback!"
-                except Exception as ex:
-                    print(f"Audio cache error: {ex}")
-        
+                except Exception as ex: print(f"Audio cache error: {ex}")
         show_snack(cached_status, ft.Colors.GREEN)
 
     def open_keys_dialog(e):
         backend_name = dd_backend.value
         if backend_name == "LM Studio (Local)": return show_snack("LM Studio runs locally and does not require API keys.", ft.Colors.BLUE)
-
         backend_instance = get_active_backend()
         keys_list = ft.ListView(spacing=5, height=150)
-        
         def refresh_keys_list():
             keys_list.controls.clear()
             for k in backend_instance.keys: keys_list.controls.append(ft.Text(f"{k[:8]}...{k[-4:]}" if len(k) > 12 else k))
             page.update()
-
         new_key_field = ft.TextField(label=f"New {backend_name} API Key")
-        
         def add_key_action(e):
             val = new_key_field.value or ""
             k = val.strip()
@@ -2862,295 +2670,8 @@ def main(page: ft.Page):
                 new_key_field.value = ""
                 refresh_keys_list()
                 show_snack("Key added!", ft.Colors.GREEN)
-
         def remove_keys_action(e):
             if backend_instance.keys:
                 backend_instance.keys.pop()
                 backend_instance.save_keys(backend_instance.keys)
-                refresh_keys_list()
-                show_snack("Last key removed!", ft.Colors.ORANGE)
-
-        dlg = ft.AlertDialog(
-            title=ft.Text(f"Manage {backend_name} API Keys"),
-            content=ft.Column([
-                ft.Text("The app will automatically rotate through these keys.", italic=True, size=12),
-                keys_list, new_key_field,
-                ft.Row([ft.TextButton("Add", on_click=add_key_action, style=ft.ButtonStyle(bgcolor=ft.Colors.GREEN, color=ft.Colors.WHITE)), ft.TextButton("Remove Last", on_click=remove_keys_action, style=ft.ButtonStyle(bgcolor=ft.Colors.RED, color=ft.Colors.WHITE))])
-            ], tight=True),
-            actions=[ft.TextButton("Close", on_click=lambda e: hide_dialog(dlg))]
-        )
-        refresh_keys_list()
-        show_dialog(dlg)
-
-    # --- WIRE UP ALL BUTTON CALLBACKS ---
-    text_area.on_change = on_text_changed
-    top_play_btn.on_click = on_play_tts
-    top_rec_btn.on_click = on_record_clicked
-    copy_btn.on_click = copy_to_clipboard
-    generate_btn.on_click = on_generate
-    prompt_gen_btn.on_click = open_generate_ai_dialog
-    revise_btn.on_click = on_revise_standard
-    prompt_rev_btn.on_click = open_revise_ai_dialog
-    translate_btn.on_click = on_apply_verse
-    qa_btn.on_click = on_generate_qa
-    tts_btn.on_click = on_play_tts
-    save_btn.on_click = on_save_favorite
-    backup_btn.on_click = perform_backup
-    restore_btn.on_click = perform_restore
-    link_audio_btn.on_click = on_link_audio
-    el_manage_btn.on_click = open_el_dialog
-    fish_manage_btn.on_click = open_fish_dialog
-    test_vb_btn.on_click = test_voicebox_conn
-    btn_browse_cache.on_click = browse_cache_dir
-    btn_clear_cache.on_click = clear_cache_dir
-
-    # =======================================================
-    # UI TABS CONSTRUCTION
-    # =======================================================
-    
-    # 1. GENERATE TAB ACTIONS
-    gen_actions_container = ft.Column([
-        generate_btn,
-        ft.ResponsiveRow([
-            ft.Column([prompt_gen_btn], col={"xs": 6}), ft.Column([revise_btn], col={"xs": 6}),
-            ft.Column([prompt_rev_btn], col={"xs": 6}), ft.Column([translate_btn], col={"xs": 6}),
-            ft.Column([qa_btn], col={"xs": 6}), ft.Column([tts_btn], col={"xs": 6}),
-            ft.Column([save_btn], col={"xs": 6}), ft.Column([link_audio_btn], col={"xs": 6}),
-        ])
-    ])
-    
-    # 2. SETTINGS TAB CONTENT
-    settings_tab_content = ft.Column([
-        ft.Text("Content & Display Setup", weight=ft.FontWeight.BOLD, size=18, color=ft.Colors.BLUE_400),
-        ft.ResponsiveRow([
-            ft.Column([dd_format], col={"sm": 6, "xs": 6}), ft.Column([dd_style], col={"sm": 6, "xs": 6}),
-            ft.Column([dd_version], col={"sm": 6, "xs": 6}), ft.Column([dd_theme], col={"sm": 6, "xs": 6}),
-            ft.Column([dd_length], col={"sm": 6, "xs": 6}), ft.Column([dd_lang], col={"sm": 6, "xs": 6}),
-            ft.Column([dd_duration], col={"sm": 6, "xs": 6}), ft.Column([dd_font], col={"sm": 6, "xs": 6}),
-            ft.Column([dd_size], col={"sm": 6, "xs": 6}),
-        ]),
-        ft.Divider(),
-        ft.Text("AI Backend Models", weight=ft.FontWeight.BOLD, size=18, color=ft.Colors.BLUE_400),
-        ft.ResponsiveRow([
-            ft.Column([dd_backend], col={"sm": 6, "xs": 6}), ft.Column([dd_model], col={"sm": 6, "xs": 6}),
-        ]),
-        ft.Divider(),
-        ft.Text("Data Management", weight=ft.FontWeight.BOLD, size=18, color=ft.Colors.BLUE_400),
-        ft.ResponsiveRow([
-            ft.Column([backup_btn], col={"xs": 6}), ft.Column([restore_btn], col={"xs": 6})
-        ]),
-        ft.Container(height=50) # Padding for scrolling
-    ], scroll="auto", expand=True)
-
-    # 3. VOICE ENGINE TAB CONTENT
-    voice_tab_content = ft.Column([
-        ft.Text("TTS Engine Setup", weight=ft.FontWeight.BOLD, size=18, color=ft.Colors.PURPLE_400),
-        ft.ResponsiveRow([
-            ft.Column([dd_tts_engine], col={"sm": 12, "xs": 12}), 
-            ft.Column([chk_autoplay], col={"sm": 6, "xs": 6}), ft.Column([chk_force_cache], col={"sm": 6, "xs": 6}),
-            ft.Column([
-                ft.Row([
-                    ft.Text("Auto-Scroll Speed Multiplier:", font_family="Helvetica", size=14, weight="bold", color=ft.Colors.GREY_400),
-                    slider_label
-                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                scroll_speed_slider
-            ], col={"sm": 12, "xs": 12}),
-        ]),
-        ft.Divider(),
-        ft.Text("TikTok Configuration", weight=ft.FontWeight.BOLD, size=16, color=ft.Colors.PINK_400),
-        ft.ResponsiveRow([
-            ft.Column([tf_tiktok_session], col={"sm": 6, "xs": 6}), ft.Column([dd_tiktok_voice], col={"sm": 6, "xs": 6}),
-        ]),
-        ft.Divider(),
-        ft.Text("Voicebox Configuration", weight=ft.FontWeight.BOLD, size=16, color=ft.Colors.GREEN_400),
-        ft.ResponsiveRow([
-            ft.Column([tf_voicebox_url], col={"sm": 6, "xs": 12}), 
-            ft.Column([tf_voicebox_preset], col={"sm": 6, "xs": 6}),
-            ft.Column([dd_voicebox_engine], col={"sm": 6, "xs": 6}), 
-            ft.Column([test_vb_btn], col={"sm": 12, "xs": 12}),
-        ]),
-        ft.Divider(),
-        ft.Text("ElevenLabs & Fish Speech", weight=ft.FontWeight.BOLD, size=16, color=ft.Colors.ORANGE_400),
-        ft.ResponsiveRow([
-            ft.Column([dd_elevenlabs_preset], col={"sm": 6, "xs": 6}), ft.Column([el_manage_btn], col={"sm": 6, "xs": 6}),
-            ft.Column([tf_fish_url], col={"sm": 12, "xs": 12}),
-            ft.Column([dd_fish_preset], col={"sm": 6, "xs": 6}), ft.Column([fish_manage_btn], col={"sm": 6, "xs": 6}),
-        ]),
-        ft.Divider(),
-        ft.Text("Offline Audio Cache", weight=ft.FontWeight.BOLD, size=16, color=ft.Colors.CYAN_400),
-        ft.ResponsiveRow([
-            ft.Column([ft.Row([tf_cache_dir, btn_browse_cache, btn_clear_cache], expand=True)], col={"sm": 12, "xs": 12}),
-        ]),
-        ft.Container(height=50) # Padding for scrolling
-    ], scroll="auto", expand=True)
-
-    # 4. FAVORITES TAB CONTENT
-    custom_border = ft.Border(top=ft.BorderSide(1, "#374151"), bottom=ft.BorderSide(1, "#374151"), left=ft.BorderSide(1, "#374151"), right=ft.BorderSide(1, "#374151"))
-    
-    def open_cache_folder_cmd(e):
-        cache_dir = getattr(tf_cache_dir, 'value', "").strip()
-        if not cache_dir: cache_dir = DATA_DIR
-        os.makedirs(cache_dir, exist_ok=True)
-        try:
-            if platform.system() == "Windows":
-                os.startfile(cache_dir)
-            elif platform.system() == "Darwin":
-                subprocess.Popen(["open", cache_dir])
-            else:
-                subprocess.Popen(["xdg-open", cache_dir])
-        except Exception as ex:
-            show_snack(f"Could not open folder: {ex}", ft.Colors.RED)
-
-    fav_title_row = ft.Row([
-        ft.Text("Saved Documents", weight=ft.FontWeight.BOLD),
-        ft.Container(expand=True),
-        ft.TextButton("📁 Open Cache Folder", on_click=open_cache_folder_cmd, height=30, style=ft.ButtonStyle(padding=0))
-    ])
-
-    favorites_tab_content = ft.Column([
-        fav_title_row,
-        ft.Container(content=fav_list, expand=True, border=custom_border, border_radius=5, padding=5)
-    ], expand=True)
-
-    # =======================================================
-    # FULLSCREEN & TAB NAVIGATION LOGIC
-    # =======================================================
-    
-    header_gen_left = ft.Row([
-        ft.Text("Preview", weight="bold", color=ft.Colors.GREY_500), 
-        top_play_btn, top_rec_btn, copy_btn
-    ], alignment=ft.MainAxisAlignment.START, spacing=0)
-
-    # Create space-saving buttons
-    fs_portrait_btn = ft.TextButton("📱 Port", tooltip="Portrait Mode", on_click=lambda e: set_fullscreen("portrait"), style=ft.ButtonStyle(color="#60A5FA"))
-    fs_landscape_btn = ft.TextButton("📺 Land", tooltip="Landscape Mode", on_click=lambda e: set_fullscreen("landscape"), style=ft.ButtonStyle(color="#60A5FA"))
-    fs_exit_btn = ft.TextButton("↙️ Exit", tooltip="Exit Fullscreen", on_click=lambda e: set_fullscreen("none"), style=ft.ButtonStyle(color="#60A5FA"), visible=False)
-    
-    fs_portrait_btn.visible = True
-    fs_landscape_btn.visible = True
-    fs_exit_btn.visible = False
-    
-    fs_row = ft.Row([fs_portrait_btn, fs_landscape_btn, fs_exit_btn], spacing=0)
-    header_gen = ft.Row([header_gen_left, fs_row], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
-    
-    generator_tab_content = ft.Column([header_gen, text_container_gen, ft.Divider(color=ft.Colors.TRANSPARENT, height=5), gen_actions_container], expand=True, scroll="hidden", spacing=0) 
-
-    tab_view_container = ft.Container(
-        content=ft.Column([
-            generator_tab_content,
-            settings_tab_content,
-            voice_tab_content,
-            favorites_tab_content
-        ], expand=True), 
-        expand=True, 
-        padding=10
-    )
-    
-    active_tab_style = ft.ButtonStyle(bgcolor="#1D4ED8", color=ft.Colors.WHITE, shape=ft.RoundedRectangleBorder(radius=5), padding=ft.padding.symmetric(horizontal=8, vertical=0))
-    inactive_tab_style = ft.ButtonStyle(bgcolor=ft.Colors.TRANSPARENT, color=ft.Colors.GREY_400, shape=ft.RoundedRectangleBorder(radius=5), padding=ft.padding.symmetric(horizontal=8, vertical=0))
-
-    gen_tab_btn = ft.TextButton("✨ Gen", expand=True, on_click=lambda e: switch_to_tab("gen"), style=inactive_tab_style)
-    set_tab_btn = ft.TextButton("⚙️ Setup", expand=True, on_click=lambda e: switch_to_tab("set"), style=inactive_tab_style)
-    voice_tab_btn = ft.TextButton("🗣️ Voice", expand=True, on_click=lambda e: switch_to_tab("voice"), style=inactive_tab_style)
-    fav_tab_btn = ft.TextButton("❤️ Favs", expand=True, on_click=lambda e: switch_to_tab("fav"), style=inactive_tab_style)
-    
-    tabs_row_container = ft.Container(content=ft.Row([gen_tab_btn, set_tab_btn, voice_tab_btn, fav_tab_btn], alignment=ft.MainAxisAlignment.CENTER, spacing=2), padding=ft.padding.only(left=5, right=5, top=5))
-
-    def switch_to_tab(tab_name):
-        gen_tab_btn.style = inactive_tab_style
-        set_tab_btn.style = inactive_tab_style
-        voice_tab_btn.style = inactive_tab_style
-        fav_tab_btn.style = inactive_tab_style
-        
-        # Hide all contents natively via CSS
-        generator_tab_content.visible = False
-        settings_tab_content.visible = False
-        voice_tab_content.visible = False
-        favorites_tab_content.visible = False
-
-        if tab_name == "gen":
-            generator_tab_content.visible = True
-            gen_tab_btn.style = active_tab_style
-        elif tab_name == "set":
-            settings_tab_content.visible = True
-            set_tab_btn.style = active_tab_style
-        elif tab_name == "voice":
-            voice_tab_content.visible = True
-            voice_tab_btn.style = active_tab_style
-        else:
-            favorites_tab_content.visible = True
-            fav_tab_btn.style = active_tab_style
-            
-        page.update()
-
-    def set_fullscreen(mode):
-        current_fullscreen_mode[0] = mode
-        if mode == "none":
-            is_fullscreen[0] = False
-            if not is_android_sys():
-                set_window_size(page, 450, 850)
-            
-            if not is_video_recording[0]:
-                reading_container.border = ft.border.all(1.5, ft.Colors.BLUE_600)
-                
-            reading_container.padding = ft.padding.only(left=20, right=20, top=15, bottom=15)
-        elif mode == "portrait":
-            is_fullscreen[0] = True
-            if not is_android_sys():
-                set_window_size(page, 450, 800)
-            reading_container.border = None
-            reading_container.padding = ft.padding.only(left=25, right=25, top=35, bottom=35)
-        elif mode == "landscape":
-            is_fullscreen[0] = True
-            if not is_android_sys():
-                set_window_size(page, 800, 450)
-            reading_container.border = None
-            reading_container.padding = ft.padding.only(left=40, right=40, top=35, bottom=35)
-            
-        title_row.visible = not is_fullscreen[0]
-        status_row.visible = not is_fullscreen[0]
-        tabs_row_container.visible = not is_fullscreen[0]
-        gen_actions_container.visible = not is_fullscreen[0]
-        
-        if is_fullscreen[0]:
-            generator_tab_content.scroll = None
-            text_container_gen.height = None
-            text_container_gen.expand = True
-            tab_view_container.padding = 0
-            
-            fs_portrait_btn.visible = False
-            fs_landscape_btn.visible = False
-            fs_exit_btn.visible = True
-        else:
-            generator_tab_content.scroll = "hidden"
-            text_container_gen.height = 380
-            text_container_gen.expand = False
-            tab_view_container.padding = 10
-            
-            fs_portrait_btn.visible = True
-            fs_landscape_btn.visible = True
-            fs_exit_btn.visible = False
-            
-        page.update()
-
-    switch_to_tab("gen")
-    refresh_fav_list()
-    update_font()
-    on_backend_change(None)
-
-    title_row = ft.Row(
-        [ft.Container(width=45), ft.Text(f"Edu's Daily Devotional {APP_VERSION}", size=18, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER), ft.TextButton("🔑", on_click=open_keys_dialog, width=45, height=45, tooltip="API Keys", style=ft.ButtonStyle(padding=0))],
-        alignment=ft.MainAxisAlignment.SPACE_BETWEEN
-    )
-
-    status_row = ft.Row([pr, status_text], alignment=ft.MainAxisAlignment.CENTER)
-    page.add(title_row, status_row, tabs_row_container, tab_view_container)
-
-if __name__ == "__main__":
-    try:
-        # DATA_DIR is passed to assets_dir, turning the folder into Flet's internal web root!
-        ft.app(target=main, assets_dir=DATA_DIR)
-    except Exception as e:
-        print("\n❌ FATAL CRASH OCCURRED ❌")
-        traceback.print_exc()
-        if not is_android_sys(): input("\nPress Enter to close this window...")
+                refresh_
