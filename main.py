@@ -28,7 +28,7 @@ import requests
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-APP_VERSION = "v3.3 (Final APK Build)"
+APP_VERSION = "v3.5 (Ultimate Anti-Crash)"
 
 # =========================================================
 # SAFE WRITABLE DIRECTORY
@@ -909,6 +909,7 @@ def main(page: ft.Page):
 
     chk_autoplay = ft.Checkbox(label="Auto-Play Audio", value=True)
     chk_force_cache = ft.Checkbox(label="Force Cache Only (Silent if missing)", value=False)
+    chk_flet_audio = ft.Checkbox(label="Enable Built-in Audio Player (Uncheck if app crashes)", value=False)
     
     scroll_speed_slider = ft.Slider(min=0, max=100, divisions=100, value=20)
     slider_label = ft.Text(f"{20 / 20.0:.1f}x", size=14, weight="bold", color=ft.Colors.BLUE_400)
@@ -1003,7 +1004,6 @@ def main(page: ft.Page):
         if AudioControl:
             audio_player = AudioControl(autoplay=False)
             audio_player.on_state_changed = on_audio_state_changed
-            page.overlay.append(audio_player)
         else:
             audio_player = None
     except Exception as e:
@@ -1044,6 +1044,7 @@ def main(page: ft.Page):
     
     chk_autoplay.value = app_settings.get("autoplay", True)
     chk_force_cache.value = app_settings.get("force_cache", False)
+    chk_flet_audio.value = app_settings.get("flet_audio_enabled", False)
     
     saved_scroll_speed = app_settings.get("scroll_speed", 20)
     scroll_speed_slider.value = saved_scroll_speed
@@ -1321,6 +1322,7 @@ def main(page: ft.Page):
             top_rec_btn.disabled = is_loading
             chk_autoplay.disabled = is_loading
             chk_force_cache.disabled = is_loading
+            chk_flet_audio.disabled = is_loading
             el_manage_btn.disabled = is_loading
             fish_manage_btn.disabled = is_loading
             link_audio_btn.disabled = is_loading
@@ -1371,6 +1373,7 @@ def main(page: ft.Page):
             if hasattr(tf_fish_url, 'value'): data["fish_url"] = tf_fish_url.value.strip()
             if hasattr(chk_autoplay, 'value'): data["autoplay"] = chk_autoplay.value
             if hasattr(chk_force_cache, 'value'): data["force_cache"] = chk_force_cache.value
+            if hasattr(chk_flet_audio, 'value'): data["flet_audio_enabled"] = chk_flet_audio.value
             if hasattr(scroll_speed_slider, 'value'): data["scroll_speed"] = scroll_speed_slider.value
             if hasattr(tf_cache_dir, 'value'): data["audio_cache_dir"] = tf_cache_dir.value
             
@@ -1672,7 +1675,7 @@ def main(page: ft.Page):
             
     def on_simple_setting_change(e): save_app_settings()
         
-    for dd in [dd_format, dd_style, dd_theme, dd_length, dd_lang, dd_duration, dd_tts_engine, chk_autoplay, chk_force_cache, tf_tiktok_session, dd_tiktok_voice, tf_voicebox_url, tf_voicebox_preset, dd_voicebox_engine, dd_elevenlabs_preset, dd_fish_preset, tf_fish_url]:
+    for dd in [dd_format, dd_style, dd_theme, dd_length, dd_lang, dd_duration, dd_tts_engine, chk_autoplay, chk_force_cache, chk_flet_audio, tf_tiktok_session, dd_tiktok_voice, tf_voicebox_url, tf_voicebox_preset, dd_voicebox_engine, dd_elevenlabs_preset, dd_fish_preset, tf_fish_url]:
         dd.on_change = save_app_settings
 
     def update_font(e=None):
@@ -1940,7 +1943,10 @@ def main(page: ft.Page):
             try:
                 is_audio_playing[0] = False
                 is_video_recording[0] = False
-                if PYGAME_AVAILABLE and not is_android_sys() and pygame.mixer.get_init() and pygame.mixer.music.get_busy(): 
+                
+                is_pc_env = page.platform not in [ft.PagePlatform.ANDROID, ft.PagePlatform.IOS]
+                
+                if PYGAME_AVAILABLE and is_pc_env and pygame.mixer.get_init() and pygame.mixer.music.get_busy(): 
                     pygame.mixer.music.stop()
                 else:
                     global audio_player
@@ -2167,11 +2173,13 @@ def main(page: ft.Page):
 
                             # --- ULTIMATE AUDIO INJECTION SYSTEM ---
                             if not is_silent_playback:
-                                if PYGAME_AVAILABLE and not is_android_sys():
+                                is_pc = page.platform not in [ft.PagePlatform.ANDROID, ft.PagePlatform.IOS]
+                                
+                                if PYGAME_AVAILABLE and is_pc:
                                     if not pygame.mixer.get_init(): pygame.mixer.init()
                                     pygame.mixer.music.load(output_path)
                                     pygame.mixer.music.play()
-                                else:
+                                elif chk_flet_audio.value:
                                     try: 
                                         global audio_player
                                         if 'audio_player' not in globals() or not audio_player:
@@ -2180,13 +2188,16 @@ def main(page: ft.Page):
                                                 audio_player.on_state_changed = on_audio_state_changed
                                                 page.overlay.append(audio_player)
                                                 page.update()
+                                        elif audio_player not in page.overlay:
+                                            page.overlay.append(audio_player)
+                                            page.update()
                                         
                                         # Ensure the audio player exists AND is mounted to the page
                                         if audio_player and getattr(audio_player, "page", None):
-                                            # FLET ASSET SERVER INJECTION
-                                            # Instead of using file:// paths which break Android 11+ Scoped Storage,
-                                            # we use the relative filename. Flet's internal webserver will stream it!
-                                            audio_player.src = play_target_filename
+                                            safe_path = play_target_path
+                                            if not is_pc and not safe_path.startswith("file://"):
+                                                safe_path = f"file://{safe_path}"
+                                            audio_player.src = safe_path
                                             try: audio_player.src_base64 = None
                                             except: pass
                                             page.update()
@@ -2196,6 +2207,8 @@ def main(page: ft.Page):
                                             show_snack("Audio Engine Missing! Flet Audio not loaded.", ft.Colors.RED)
                                     except Exception as e:
                                         show_snack(f"Flet Audio Error: {e}", ft.Colors.RED)
+                                else:
+                                    show_snack("🔊 Audio disabled! Enable 'Built-in Audio Player' in Setup tab after fixing requirements.txt.", ft.Colors.ORANGE)
 
                             if record_video and is_cached: status_msg = "🔴 Recording Video (Audio from Cache)..."
                             elif record_video and is_silent_playback: status_msg = "🔴 Recording Video (Silent Mode)..."
@@ -2719,6 +2732,11 @@ def main(page: ft.Page):
             ft.Column([dd_length], col={"sm": 6, "xs": 6}), ft.Column([dd_lang], col={"sm": 6, "xs": 6}),
             ft.Column([dd_duration], col={"sm": 6, "xs": 6}), ft.Column([dd_font], col={"sm": 6, "xs": 6}),
             ft.Column([dd_size], col={"sm": 6, "xs": 6}),
+        ]),
+        ft.Divider(),
+        ft.Text("App Safety Settings", weight=ft.FontWeight.BOLD, size=18, color=ft.Colors.RED_400),
+        ft.ResponsiveRow([
+            ft.Column([chk_flet_audio], col={"sm": 12, "xs": 12}),
         ]),
         ft.Divider(),
         ft.Text("AI Backend Models", weight=ft.FontWeight.BOLD, size=18, color=ft.Colors.BLUE_400),
