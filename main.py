@@ -9,7 +9,6 @@ import warnings
 import traceback
 import datetime
 import time
-import base64
 import urllib.parse
 import threading
 import inspect
@@ -18,27 +17,19 @@ import shutil
 import hashlib
 
 # ---------------------------------------------------------
-# STABLE AUDIO ENGINE RESOLVER
-# This automatically falls back to Flet's built-in audio
-# engine (v0.21.2) to permanently prevent compiler crashes!
+# PURE NATIVE IMPORTS
 # ---------------------------------------------------------
 import flet as ft
-try:
-    import flet_audio as fta
-    AudioControl = fta.Audio
-except ImportError:
-    try:
-        AudioControl = ft.Audio
-    except AttributeError:
-        AudioControl = None
+import flet_audio as fta
+from flet_audio import Audio
 import requests
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-APP_VERSION = "v2.8"
+APP_VERSION = "v3.0 (Native Release)"
 
 # =========================================================
-# THE ANDROID CRASH FIX: SAFE WRITABLE DIRECTORY
+# SAFE WRITABLE DIRECTORY
 # =========================================================
 def get_safe_data_dir():
     app_folder = "DailyDevotionalData"
@@ -118,7 +109,7 @@ def get_length_instruction(length_str):
     else: return "in-depth body (5 or more paragraphs)"
 
 # ==========================================
-# 2. BACKEND LOGIC (GROQ, GEMINI, OPENAI, LM STUDIO)
+# 2. BACKEND LOGIC
 # ==========================================
 class BaseBackend:
     def __init__(self, config_file, service_name):
@@ -353,7 +344,7 @@ class OpenAICompatibleBackend(BaseBackend):
                     except json.JSONDecodeError: api_err = response.text
                     last_error_msg = f"API Error (Status {response.status_code}):\n{api_err}"
                     if response.status_code in [400, 401, 403]:
-                        self.key_index = (self.key_index + 1) % len(keys_to_try)
+                        self.key_index = (self.key_index + 1) % len(self.keys)
                         continue
                     if self.service_name == "lmstudio": return False, last_error_msg
                     break
@@ -1062,15 +1053,12 @@ def main(page: ft.Page):
 
     # =========================================================
     # THE AUDIO PLAYER INJECTION
-    # Fully Restored to Native Flet Engine compatibility
+    # Fully Restored Native Audio Object
     # =========================================================
     try:
-        if AudioControl:
-            audio_player = AudioControl(autoplay=False)
-            audio_player.on_state_changed = on_audio_state_changed
-            page.overlay.append(audio_player)
-        else:
-            audio_player = None
+        audio_player = Audio(autoplay=False)
+        audio_player.on_state_changed = on_audio_state_changed
+        page.overlay.append(audio_player)
     except Exception as e:
         audio_player = None
         print(f"Audio init failed: {e}")
@@ -2160,7 +2148,7 @@ def main(page: ft.Page):
                         try: os.remove(os.path.join(DATA_DIR, f))
                         except: pass
                 
-                output_file = f"tts_output_{int(my_render_id)}.mp3"
+                output_file = f"{content_hash}.mp3"
                 output_path = os.path.join(DATA_DIR, output_file)
                 
                 cache_dir = getattr(tf_cache_dir, 'value', "").strip()
@@ -2277,8 +2265,17 @@ def main(page: ft.Page):
                                         shutil.copy2(output_path, cache_path_specific)
                                         shutil.copy2(output_path, cache_path_pure)
                                         print(f"✅ Auto-Cached audio to {cache_path_pure}")
+                                        
+                                        # Also make sure it's copied to DATA_DIR so the Flet asset server sees it
+                                        if os.path.abspath(output_path) != os.path.abspath(os.path.join(DATA_DIR, output_file)):
+                                            shutil.copy2(output_path, os.path.join(DATA_DIR, output_file))
+                                            
                                 except Exception as e:
                                     print(f"⚠️ Cache Error: {e}")
+                            else:
+                                # It was cached somewhere else, make sure it's in DATA_DIR for Flet to serve
+                                if os.path.abspath(output_path) != os.path.abspath(os.path.join(DATA_DIR, output_file)):
+                                    shutil.copy2(output_path, os.path.join(DATA_DIR, output_file))
 
                 if success:
                     if output_path and os.path.exists(output_path) and os.path.getsize(output_path) < 100:
@@ -2294,14 +2291,6 @@ def main(page: ft.Page):
                         temp_avi_path = os.path.join(DATA_DIR, f"temp_video_{int(time.time())}.avi")
                         temp_mp4_path = os.path.join(DATA_DIR, "temp_final_video.mp4")
                         
-                        play_target_filename = ""
-                        if not is_silent_playback:
-                            ext = ".mp3" if output_path.endswith(".mp3") else ".wav"
-                            play_target_filename = f"play_{int(my_render_id)}{ext}"
-                            play_target_path = os.path.join(DATA_DIR, play_target_filename)
-                            try: shutil.copy2(output_path, play_target_path)
-                            except: play_target_filename = os.path.basename(output_path)
-
                         is_processing[0] = False 
                         
                         def ui_updates():
@@ -2323,24 +2312,18 @@ def main(page: ft.Page):
                                     try: 
                                         global audio_player
                                         if 'audio_player' not in globals() or not audio_player:
-                                            if AudioControl:
-                                                audio_player = AudioControl(autoplay=False)
-                                                audio_player.on_state_changed = on_audio_state_changed
-                                                page.overlay.append(audio_player)
-                                                page.update()
-                                            
-                                        if audio_player:
-                                            # Use Flet's internal asset routing directly
-                                            audio_player.src = play_target_filename
-                                            try: audio_player.src_base64 = None
-                                            except: pass
+                                            audio_player = Audio(autoplay=False)
+                                            audio_player.on_state_changed = on_audio_state_changed
+                                            page.overlay.append(audio_player)
                                             page.update()
-                                            audio_player.update()
-                                            audio_player.play()
-                                        else:
-                                            show_snack("Audio Engine Missing!", ft.Colors.RED)
+                                            
+                                        # Use Flet's internal asset routing directly
+                                        audio_player.src = output_file
+                                        page.update()
+                                        audio_player.update()
+                                        audio_player.play()
                                     except Exception as e:
-                                        show_snack(f"Flet Audio Error: {e}", ft.Colors.RED)
+                                        show_snack("Audio Engine Missing! Install the real APK to hear sound.", ft.Colors.RED)
 
                             if record_video and is_cached:
                                 status_msg = "🔴 Recording Video (Audio from Cache)..."
