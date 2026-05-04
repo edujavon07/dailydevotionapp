@@ -22,22 +22,16 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Force Pure Requirements & Install
-        # This deletes the Windows text file and generates a pure Linux one!
+      - name: Install Stable Flet 0.21.2
         run: |
-          rm -f requirements.txt
-          echo "flet" > requirements.txt
-          echo "requests" >> requirements.txt
-          echo "flet-audio" >> requirements.txt
-          cat requirements.txt
-          pip install -r requirements.txt
+          pip install flet==0.21.2 requests
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
 
-      - name: Build the APK
+      - name: Build the APK (STABLE NATIVE AUDIO)
         run: |
           flet build apk --project devotional --org com.edu.devotional
 
