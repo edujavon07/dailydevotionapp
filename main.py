@@ -22,16 +22,16 @@ import hashlib
 # We have fully restored flet_audio!
 # ---------------------------------------------------------
 import flet as ft
+import flet_audio as fta
+from flet_audio import Audio
 import requests
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-APP_VERSION = "v2.6"
+APP_VERSION = "v2.7"
 
 # =========================================================
 # THE ANDROID CRASH FIX: SAFE WRITABLE DIRECTORY
-# =========================================================
-# SAFE WRITABLE DIRECTORY
 # =========================================================
 def get_safe_data_dir():
     app_folder = "DailyDevotionalData"
@@ -2071,7 +2071,7 @@ def main(page: ft.Page):
                 is_audio_playing[0] = False
                 is_video_recording[0] = False
                 
-                if PYGAME_AVAILABLE and pygame.mixer.get_init() and pygame.mixer.music.get_busy(): 
+                if PYGAME_AVAILABLE and not is_android_sys() and pygame.mixer.get_init() and pygame.mixer.music.get_busy(): 
                     pygame.mixer.music.stop()
                 else:
                     global audio_player
@@ -2318,13 +2318,14 @@ def main(page: ft.Page):
                                             page.overlay.append(audio_player)
                                             page.update()
                                             
-                                        # Use the safe file path for Flet Audio
-                                        audio_player.src = output_path
+                                        # Use Flet's internal asset routing directly!
+                                        audio_player.src = play_target_filename
+                                        audio_player.src_base64 = None
                                         page.update()
                                         audio_player.update()
                                         audio_player.play()
                                     except Exception as e:
-                                        show_snack("Cannot play audio: Flet-Audio plugin missing in APK!", ft.Colors.RED)
+                                        show_snack("Flet-Audio plugin encountered an error playing audio!", ft.Colors.RED)
 
                             if record_video and is_cached:
                                 status_msg = "🔴 Recording Video (Audio from Cache)..."
@@ -2352,7 +2353,6 @@ def main(page: ft.Page):
                                 top_rec_btn.text = "⏹️ Stop Rec"
                                 reading_container.border = None
                             
-                            # Swap content instead of using visibility toggles on expanding rows
                             reading_text.value = "\n" + content + "\n\n\n\n"
                             try: reading_text.update()
                             except: pass
@@ -2515,7 +2515,7 @@ def main(page: ft.Page):
                                         
                                         if is_silent_playback and elapsed >= audio_dur:
                                             break
-                                            
+                                        
                                         multiplier = 1.0
                                         try: multiplier = float(scroll_speed_slider.value) / 20.0
                                         except: pass
@@ -3178,6 +3178,7 @@ def main(page: ft.Page):
 
 if __name__ == "__main__":
     try:
+        # DATA_DIR is passed to assets_dir, turning the folder into Flet's internal web root!
         ft.app(target=main, assets_dir=DATA_DIR)
     except Exception as e:
         print("\n❌ FATAL CRASH OCCURRED ❌")
