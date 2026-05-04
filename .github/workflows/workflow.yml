@@ -26,9 +26,10 @@ jobs:
         run: |
           pip install flet==0.21.2 requests
 
-      - name: Setup Flutter
+      - name: Setup Flutter (MATCHING STABLE VERSION)
         uses: subosito/flutter-action@v2
         with:
+          flutter-version: '3.19.6'
           channel: 'stable'
 
       - name: Build the APK (STABLE NATIVE AUDIO)
