@@ -15,6 +15,7 @@ import inspect
 import asyncio
 import shutil
 import hashlib
+import base64
 
 # ---------------------------------------------------------
 # STABLE ENGINE IMPORTS (v0.21.2 Compatible)
