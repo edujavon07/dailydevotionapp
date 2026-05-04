@@ -22,17 +22,25 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install Stable Flet 0.21.2
+      - name: Generate Strict Requirements
+        # This is the magic fix! It forces the compiler to see flet-audio
         run: |
-          pip install flet==0.21.2 requests
+          rm -f requirements.txt
+          echo "flet" > requirements.txt
+          echo "flet-audio" >> requirements.txt
+          echo "requests" >> requirements.txt
+          cat requirements.txt
 
-      - name: Setup Flutter (MATCHING STABLE VERSION)
+      - name: Install Dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.19.6'
           channel: 'stable'
 
-      - name: Build the APK (STABLE NATIVE AUDIO)
+      - name: Build the APK
         run: |
           flet build apk --project devotional --org com.edu.devotional
 
