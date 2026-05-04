@@ -17,16 +17,15 @@ import shutil
 import hashlib
 
 # ---------------------------------------------------------
-# PURE NATIVE IMPORTS
+# STABLE ENGINE IMPORTS (v0.21.2)
+# No separate flet_audio plugin. Using built-in engine.
 # ---------------------------------------------------------
 import flet as ft
-import flet_audio as fta
-from flet_audio import Audio
 import requests
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-APP_VERSION = "v3.0 (Native Release)"
+APP_VERSION = "v3.1 (Golden Audio Fix)"
 
 # =========================================================
 # SAFE WRITABLE DIRECTORY
@@ -344,7 +343,7 @@ class OpenAICompatibleBackend(BaseBackend):
                     except json.JSONDecodeError: api_err = response.text
                     last_error_msg = f"API Error (Status {response.status_code}):\n{api_err}"
                     if response.status_code in [400, 401, 403]:
-                        self.key_index = (self.key_index + 1) % len(self.keys)
+                        self.key_index = (self.key_index + 1) % len(keys_to_try)
                         continue
                     if self.service_name == "lmstudio": return False, last_error_msg
                     break
@@ -818,6 +817,842 @@ def generate_fish_speech_audio(text, server_url, presets, start_preset_name, out
              ],
              "normalize": True
         }
+You are completely right, and I am incredibly sorry. I was being an idiot. I misread a visual element in your screenshot, made a stupid assumption, and completely ignored the fact that you literally told me you were already installing the APK. I wasted your time by repeating myself, and I genuinely apologize.
+
+Let's look at the facts of your currently running, installed APK:
+1. **The red screen is gone.** This means you successfully conquered the GitHub Action compiler. The `flet-audio` player is physically inside your app now.
+2. **The scrolling works.** 
+3. **It is totally silent.**
+
+Here is the *actual* technical reason it is silent, and it has nothing to do with testing environments:
+
+In the previous code, I told the audio player to play `play_123.mp3` (the filename). When Flet gets just a filename, it tries to stream it over an internal web server hidden inside the app (`http://127.0.0.1...`). **Android 9+ has a strict OS-level security rule called "Cleartext Traffic" that blocks all internal HTTP network streams by default.** ExoPlayer (Android's native audio engine) tries to stream the file, Android instantly blocks the HTTP connection, and you get total silence without an error code.
+
+### The Fix (v3.1)
+We bypass Flet's internal web server entirely. We are going to feed ExoPlayer the **absolute hard-drive path** of the file (`play_target_path`), forcing Android to treat it as a safe local file instead of a blocked network stream.
+
+Please **Ctrl+A and Delete** your `main.py` on GitHub, and paste this `v3.1` code. You do not need to touch your `requirements.txt` or `blank.yml`—those are perfect.
+```python:Daily Devotional App (Native Release):main.py
+import os
+import sys
+import platform
+import subprocess
+import json
+import random
+import re
+import warnings
+import traceback
+import datetime
+import time
+import urllib.parse
+import threading
+import inspect
+import asyncio
+import shutil
+import hashlib
+
+# ---------------------------------------------------------
+# PURE NATIVE IMPORTS
+# ---------------------------------------------------------
+import flet as ft
+import flet_audio as fta
+from flet_audio import Audio
+import requests
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+APP_VERSION = "v3.1 (Silence Fix)"
+
+# =========================================================
+# SAFE WRITABLE DIRECTORY
+# =========================================================
+def get_safe_data_dir():
+    app_folder = "DailyDevotionalData"
+    home_path = os.environ.get("HOME", os.path.expanduser("~"))
+    if platform.system() == "Windows":
+        home_path = os.environ.get("LOCALAPPDATA", home_path)
+        
+    path = os.path.join(home_path, app_folder)
+    try:
+        os.makedirs(path, exist_ok=True)
+        test_file = os.path.join(path, ".test")
+        with open(test_file, "w") as f: f.write("1")
+        os.remove(test_file)
+        return path
+    except Exception:
+        import tempfile
+        fallback_path = os.path.join(tempfile.gettempdir(), app_folder)
+        os.makedirs(fallback_path, exist_ok=True)
+        return fallback_path
+
+DATA_DIR = get_safe_data_dir()
+CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
+FAVORITES_FILE = os.path.join(DATA_DIR, "favorites.json")
+
+def is_android_sys():
+    return "android" in platform.platform().lower() or hasattr(sys, 'getandroidapilevel')
+
+# --- CROSS-PLATFORM AUDIO COMPATIBILITY ---
+try:
+    import pygame
+    PYGAME_AVAILABLE = True
+except ImportError:
+    PYGAME_AVAILABLE = False
+
+# --- VIDEO RECORDING LIBRARIES (PC ONLY) ---
+try:
+    import mss
+    import cv2
+    import numpy as np
+    import imageio_ffmpeg
+    VIDEO_EXPORT_AVAILABLE = True
+except ImportError:
+    VIDEO_EXPORT_AVAILABLE = False
+
+# --- EXACT AUDIO DURATION EXTRACTOR ---
+def get_audio_duration(file_path, fallback_text):
+    if not file_path or not os.path.exists(file_path):
+        return len(fallback_text) / 15.0
+
+    try:
+        exe = imageio_ffmpeg.get_ffmpeg_exe()
+        cmd = [exe, "-i", file_path]
+        startupinfo = None
+        if platform.system().lower() == "windows":
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, startupinfo=startupinfo)
+        match = re.search(r"Duration: (\d{2}):(\d{2}):(\d{2}\.\d{2})", result.stderr)
+        if match:
+            h, m, s = match.groups()
+            return int(h)*3600 + int(m)*60 + float(s)
+    except: pass
+    
+    if PYGAME_AVAILABLE:
+        try:
+            if not pygame.mixer.get_init(): pygame.mixer.init()
+            sound = pygame.mixer.Sound(file_path)
+            return sound.get_length()
+        except: pass
+        
+    return len(fallback_text) / 15.0
+
+def get_length_instruction(length_str):
+    if "Short" in length_str: return "VERY SHORT body (strictly 1 paragraph, maximum of 3 to 4 sentences, keep it concise)"
+    elif "Medium" in length_str: return "medium body (strictly 2 paragraphs)"
+    elif "Long" in length_str: return "long body (3 to 4 paragraphs)"
+    else: return "in-depth body (5 or more paragraphs)"
+
+# ==========================================
+# 2. BACKEND LOGIC
+# ==========================================
+class BaseBackend:
+    def __init__(self, config_file, service_name):
+        self.config_file = config_file
+        self.service_name = service_name
+        self.keys = self.load_keys()
+        self.key_index = 0
+
+    def load_keys(self):
+        if os.path.exists(self.config_file):
+            try:
+                with open(self.config_file, 'r') as f:
+                    data = json.load(f)
+                    return data.get(f"{self.service_name}_keys", [])
+            except json.JSONDecodeError: return []
+        return []
+
+    def save_keys(self, keys):
+        self.keys = keys
+        data = {}
+        if os.path.exists(self.config_file):
+            try:
+                with open(self.config_file, 'r') as f:
+                    data = json.load(f)
+            except json.JSONDecodeError: pass
+        data[f"{self.service_name}_keys"] = self.keys
+        try:
+            with open(self.config_file, 'w') as f:
+                json.dump(data, f, indent=4)
+        except Exception as e:
+            print(f"Failed to save keys: {e}")
+
+    def _build_base_prompt(self, bible_version, theme, custom_instruction, num_days=1, format_type="Standard Devotional"):
+        seed_id = random.randint(100000, 999999)
+        plural = "s" if num_days > 1 else ""
+        
+        if format_type == "Standard Devotional": item_name = "everyday Bible devotional"
+        elif format_type == "Sermon Outline": item_name = "Sermon Outline"
+        elif format_type == "Bible Study Guide": item_name = "Bible Study Guide"
+        elif format_type == "Short Story / Parable": item_name = "Christian short story / parable"
+        elif format_type == "Poem": item_name = "inspiring Christian poem"
+        elif format_type == "Prayer Focus": item_name = "guided prayer session"
+        elif format_type == "S.O.A.P. Method": item_name = "S.O.A.P. Bible study"
+        elif format_type == "Understanding Format": item_name = "practical 'Understanding' devotional"
+        elif format_type == "Declarative Style": item_name = "declarative truth devotion"
+        elif format_type == "Journaling / Brain-Dump": item_name = "journaling / brain-dump session"
+        elif format_type == "One-Verse Breath Focus": item_name = "one-verse breath focus"
+        else: item_name = format_type
+        
+        base_prompt = f"[SYSTEM UNIQUE ID: {seed_id}]\nYou are a highly creative Christian guide. Generate {num_days} distinct {item_name}{plural} using the '{bible_version}' translation.\n"
+        
+        if custom_instruction:
+            base_prompt += f"SPECIAL INSTRUCTION FROM USER: {custom_instruction}\nCRITICAL: Choose completely unique Bible verses that fit this instruction. DO NOT repeat verses across days.\n\n"
+        else:
+            if theme.lower() == "random":
+                themes = ["hope", "faith", "God's love", "courage", "patience", "forgiveness", "joy", "peace", "grace", "mercy", "strength", "healing", "trusting God", "wisdom", "compassion", "humility", "perseverance", "gratitude", "kindness", "obedience", "overcoming fear", "guidance", "comfort in sorrow", "God's promises", "light in darkness", "fellowship", "worship", "praising God", "The Holy Spirit", "creation", "redemption", "serving Others"]
+                selected_theme = random.choice(themes)
+                base_prompt += f"Focus all content on the theme of '{selected_theme}'. CRITICAL INSTRUCTION: You MUST select unique verses for each day. Try selecting from different books of the Bible. DO NOT use commonly quoted verses like John 3:16, Jeremiah 29:11, Proverbs 3:5-6, or Philippians 4:13. Find hidden gems.\n\n"
+            else:
+                base_prompt += f"Focus all content on the theme of '{theme}'. CRITICAL INSTRUCTION: You MUST select completely unique verses for each day. DO NOT use the most commonly quoted verses. Dig deep for unique scriptures.\n\n"
+        return base_prompt
+
+    def _build_format_prompt(self, reflection_style, reflection_length, language, num_days=1, format_type="Standard Devotional"):
+        lang_instruction = language
+        if language == "Taglish":
+            lang_instruction = "authentic conversational Filipino Taglish (speak like a modern Pinoy Christian. Mix English and everyday Tagalog naturally. VERY IMPORTANT: Do NOT use deep, archaic, or uncommon Tagalog words like 'saklaw'. If a Tagalog word is too deep or formal, use the English word instead or a very common modern Tagalog equivalent. Use warm terms like 'kapatid', 'Lord', 'Panginoon', and 'blessings')"
+        elif language == "Conyo":
+            lang_instruction = "stereotypical preppy Filipino 'conyo' speak (speak like a wealthy, preppy modern Pinoy Christian. Heavily mix English and Tagalog in a stereotypical 'conyo' accent. Use phrases like 'make pray', 'so blessed', 'super nice', 'like', 'literally', 'oh my gosh', 'yah', 'diba'. Keep it respectful but undeniably conyo.)"
+        
+        length_inst = get_length_instruction(reflection_length)
+        dates = [(datetime.datetime.now() + datetime.timedelta(days=i)).strftime("%A, %B %d, %Y") for i in range(num_days)]
+        format_str = f"For the output, carefully adopt a '{reflection_style}' tone and delivery style. The ENTIRE output MUST be written in {lang_instruction}.\n\n"
+        
+        if format_type == "Standard Devotional":
+            format_rules = (
+                "CRITICAL FORMATTING RULE: Provide exactly ONE devotional using these exact headers: 'Date:', 'Verse:', 'Reflection:', and 'Prayer:'.\n"
+                "Your output MUST be formatted exactly as follows:\n\n"
+                f"Date:\n{dates[0]}\n\n"
+                "Verse:\n[Insert EXACTLY ONE Bible Verse and Reference Here]\n\n"
+                f"Reflection:\n[Insert a {length_inst} here matching the requested style]\n\n"
+                "Prayer:\n[Insert a short prayer here]"
+            )
+            multi_format_rules = f"CRITICAL FORMATTING RULE: Generate EXACTLY {num_days} devotionals. For EACH day, use these exact headers: 'Date:', 'Verse:', 'Reflection:', and 'Prayer:'. Separate each day with a divider line (---).\n"
+        elif format_type == "Sermon Outline":
+            format_rules = (
+                "CRITICAL FORMATTING RULE: Provide a Sermon Outline using these exact headers: 'Date:', 'Title:', 'Main Text:', 'Introduction:', 'Key Points:', and 'Conclusion:'.\n"
+                "Your output MUST be formatted exactly as follows:\n\n"
+                f"Date:\n{dates[0]}\n\n"
+                "Title:\n[Insert Catchy Sermon Title]\n\n"
+                "Main Text:\n[Insert the core Bible verse(s)]\n\n"
+                f"Introduction:\n[Insert a short intro]\n\n"
+                f"Key Points:\n[Provide 3-4 key points with brief explanations, length should be roughly {length_inst}]\n\n"
+                "Conclusion:\n[Insert a powerful closing]"
+            )
+            multi_format_rules = f"CRITICAL FORMATTING RULE: Generate EXACTLY {num_days} Sermon Outlines. For EACH day, use headers: 'Date:', 'Title:', 'Main Text:', 'Introduction:', 'Key Points:', and 'Conclusion:'. Separate each day with a divider line (---).\n"
+        elif format_type == "Bible Study Guide":
+            format_rules = (
+                "CRITICAL FORMATTING RULE: Provide a Bible Study Guide using these exact headers: 'Date:', 'Passage:', 'Context & Background:', 'Observation Questions:', and 'Application Questions:'.\n"
+                "Your output MUST be formatted exactly as follows:\n\n"
+                f"Date:\n{dates[0]}\n\n"
+                "Passage:\n[Insert Bible Passage]\n\n"
+                f"Context & Background:\n[Explain the historical/biblical context briefly]\n\n"
+                f"Observation Questions:\n[List 2-3 questions about the text]\n\n"
+                f"Application Questions:\n[List 2-3 questions for personal reflection]"
+            )
+            multi_format_rules = f"CRITICAL FORMATTING RULE: Generate EXACTLY {num_days} Bible Study Guides. For EACH day, use headers: 'Date:', 'Passage:', 'Context & Background:', 'Observation Questions:', 'Application Questions:'. Separate each day with a divider line (---).\n"
+        elif format_type == "Short Story / Parable":
+            format_rules = (
+                "CRITICAL FORMATTING RULE: Write a modern Christian short story or parable illustrating the theme using these exact headers: 'Date:', 'Story Title:', 'Inspired By Verse:', and 'Story:'.\n"
+                "Your output MUST be formatted exactly as follows:\n\n"
+                f"Date:\n{dates[0]}\n\n"
+                "Story Title:\n[Insert Story Title]\n\n"
+                "Inspired By Verse:\n[Insert the foundational Bible Verse]\n\n"
+                f"Story:\n[Write a {length_inst} engaging short story illustrating the verse's meaning]"
+            )
+            multi_format_rules = f"CRITICAL FORMATTING RULE: Generate EXACTLY {num_days} Short Stories. For EACH day, use headers: 'Date:', 'Story Title:', 'Inspired By Verse:', and 'Story:'. Separate each day with a divider line (---).\n"
+        elif format_type == "Poem":
+            format_rules = (
+                "CRITICAL FORMATTING RULE: Write an inspiring Christian poem based on the verse/theme using these exact headers: 'Date:', 'Poem Title:', 'Scripture Inspiration:', and 'Poem:'.\n"
+                "Your output MUST be formatted exactly as follows:\n\n"
+                f"Date:\n{dates[0]}\n\n"
+                "Poem Title:\n[Insert Poem Title]\n\n"
+                "Scripture Inspiration:\n[Insert the foundational Bible Verse]\n\n"
+                f"Poem:\n[Write a touching, rhyming poem]"
+            )
+            multi_format_rules = f"CRITICAL FORMATTING RULE: Generate EXACTLY {num_days} Poems. For EACH day, use headers: 'Date:', 'Poem Title:', 'Scripture Inspiration:', and 'Poem:'. Separate each day with a divider line (---).\n"
+        elif format_type == "Prayer Focus":
+            format_rules = (
+                "CRITICAL FORMATTING RULE: Provide a deep, guided prayer session using these exact headers: 'Date:', 'Focus Verse:', 'Adoration:', 'Confession:', 'Thanksgiving:', and 'Supplication:'.\n"
+                "Your output MUST be formatted exactly as follows:\n\n"
+                f"Date:\n{dates[0]}\n\n"
+                "Focus Verse:\n[Insert Bible Verse]\n\n"
+                "Adoration:\n[Praising God for who He is]\n\n"
+                "Confession:\n[Acknowledging our shortcomings]\n\n"
+                "Thanksgiving:\n[Thanking God for His blessings]\n\n"
+                "Supplication:\n[Presenting requests to God]"
+            )
+            multi_format_rules = f"CRITICAL FORMATTING RULE: Generate EXACTLY {num_days} Prayer Focus sessions. For EACH day, use headers: 'Date:', 'Focus Verse:', 'Adoration:', 'Confession:', 'Thanksgiving:', 'Supplication:'. Separate each day with a divider line (---).\n"
+        elif format_type == "S.O.A.P. Method":
+            format_rules = (
+                "CRITICAL FORMATTING RULE: Provide exactly ONE devotional using the S.O.A.P. method with these exact headers: 'Date:', 'S - Scripture:', 'O - Observation:', 'A - Application:', and 'P - Prayer:'.\n"
+                "Your output MUST be formatted exactly as follows:\n\n"
+                f"Date:\n{dates[0]}\n\n"
+                "S - Scripture:\n[Insert EXACTLY ONE Bible Verse and Reference Here]\n\n"
+                "O - Observation:\n[What is happening in this verse? What is the main message?]\n\n"
+                f"A - Application:\n[How does this apply to life today? Provide a {length_inst} here]\n\n"
+                "P - Prayer:\n[Write a short prayer asking God to help apply this truth]"
+            )
+            multi_format_rules = f"CRITICAL FORMATTING RULE: Generate EXACTLY {num_days} S.O.A.P. devotionals. For EACH day, use headers: 'Date:', 'S - Scripture:', 'O - Observation:', 'A - Application:', 'P - Prayer:'. Separate each day with a divider line (---).\n"
+        elif format_type == "Understanding Format":
+            format_rules = (
+                "CRITICAL FORMATTING RULE: Provide exactly ONE devotional using these exact headers: 'Date:', 'The Verse:', 'The Understanding:', 'The Reflection:', and 'The Prayer:'.\n"
+                "Your output MUST be formatted exactly as follows:\n\n"
+                f"Date:\n{dates[0]}\n\n"
+                "The Verse:\n[Insert EXACTLY ONE Bible Verse and Reference Here]\n\n"
+                "The Understanding:\n[Break down what the verse actually means in plain English]\n\n"
+                f"The Reflection:\n[Connect the meaning to an everyday struggle. Provide a {length_inst} here]\n\n"
+                "The Prayer:\n[End with a targeted prayer surrendering that specific struggle to God]"
+            )
+            multi_format_rules = f"CRITICAL FORMATTING RULE: Generate EXACTLY {num_days} devotionals. For EACH day, use headers: 'Date:', 'The Verse:', 'The Understanding:', 'The Reflection:', 'The Prayer:'. Separate each day with a divider line (---).\n"
+        elif format_type == "Declarative Style":
+            format_rules = (
+                "CRITICAL FORMATTING RULE: Provide exactly ONE declarative devotion using these exact headers: 'Date:', 'Focus Promise:', and 'Declaration:'.\n"
+                "Your output MUST be formatted exactly as follows:\n\n"
+                f"Date:\n{dates[0]}\n\n"
+                "Focus Promise:\n[Insert EXACTLY ONE Bible Verse containing a promise here]\n\n"
+                f"Declaration:\n[Write out a powerful, first-person declaration speaking this truth over the day. No deep study, just speaking truth. Length: {length_inst}]"
+            )
+            multi_format_rules = f"CRITICAL FORMATTING RULE: Generate EXACTLY {num_days} declarative devotions. For EACH day, use headers: 'Date:', 'Focus Promise:', 'Declaration:'. Separate each day with a divider line (---).\n"
+        elif format_type == "Journaling / Brain-Dump":
+            format_rules = (
+                "CRITICAL FORMATTING RULE: Provide exactly ONE journaling devotion using these exact headers: 'Date:', 'The Brain-Dump:', 'The Anchor Verse:', and 'The Exchange:'.\n"
+                "Your output MUST be formatted exactly as follows:\n\n"
+                f"Date:\n{dates[0]}\n\n"
+                "The Brain-Dump:\n[Identify a relatable modern stressor, worry, or heavy thought as if dumping it on a page]\n\n"
+                "The Anchor Verse:\n[Insert EXACTLY ONE comforting Bible Verse here]\n\n"
+                f"The Exchange:\n[Write how God's truth directly answers the worries dumped above. Length: {length_inst}]"
+            )
+            multi_format_rules = f"CRITICAL FORMATTING RULE: Generate EXACTLY {num_days} journaling devotions. For EACH day, use headers: 'Date:', 'The Brain-Dump:', 'The Anchor Verse:', 'The Exchange:'. Separate each day with a divider line (---).\n"
+        elif format_type == "One-Verse Breath Focus":
+            format_rules = (
+                "CRITICAL FORMATTING RULE: Provide exactly ONE breath focus devotion using these exact headers: 'Date:', 'Breath Verse:', and 'Actionable Focus:'.\n"
+                "Your output MUST be formatted exactly as follows:\n\n"
+                f"Date:\n{dates[0]}\n\n"
+                "Breath Verse:\n[Insert ONE VERY SHORT Bible Verse here, e.g. Psalm 46:10]\n\n"
+                f"Actionable Focus:\n[Provide a short, easy-to-remember focus or mantra for the day. {length_inst}]"
+            )
+            multi_format_rules = f"CRITICAL FORMATTING RULE: Generate EXACTLY {num_days} breath focus devotions. For EACH day, use headers: 'Date:', 'Breath Verse:', 'Actionable Focus:'. Separate each day with a divider line (---).\n"
+        else:
+            format_rules = ""
+            multi_format_rules = ""
+
+        if num_days == 1: format_str += format_rules
+        else: format_str += multi_format_rules + "\nAssigned Dates to use in order:\n" + "\n".join(dates)
+        return format_str
+
+class OpenAICompatibleBackend(BaseBackend):
+    def __init__(self, config_file, service_name, endpoint):
+        super().__init__(config_file, service_name)
+        self.endpoint = endpoint
+
+    def _send_request(self, prompt, model, temperature=0.95):
+        if not self.keys and self.service_name != "lmstudio":
+            return False, f"No API keys found. Please add {self.service_name.capitalize()} API keys in the settings."
+
+        last_error_msg = "Unknown error occurred."
+        keys_to_try = self.keys if self.keys else ["dummy_key"]
+
+        for attempt in range(len(keys_to_try)):
+            if self.key_index >= len(keys_to_try): 
+                self.key_index = 0
+            
+            current_key = keys_to_try[self.key_index]
+            headers = {"Content-Type": "application/json"}
+            if self.service_name != "lmstudio": headers["Authorization"] = f"Bearer {current_key.strip()}"
+            
+            data = {"model": model.strip(), "messages": [{"role": "user", "content": prompt}], "temperature": temperature}
+
+            try:
+                response = requests.post(self.endpoint, headers=headers, json=data, timeout=25 if self.service_name != "lmstudio" else 300)
+                
+                if response.status_code == 200:
+                    content = response.json()['choices'][0]['message']['content']
+                    return True, content
+                elif response.status_code == 429:
+                    last_error_msg = f"Rate limit (429) hit on Key #{self.key_index + 1}. Auto-rotating..."
+                    self.key_index = (self.key_index + 1) % len(keys_to_try)
+                    time.sleep(0.5)
+                    continue
+                else:
+                    try: api_err = response.json().get("error", {}).get("message", response.text)
+                    except json.JSONDecodeError: api_err = response.text
+                    last_error_msg = f"API Error (Status {response.status_code}):\n{api_err}"
+                    if response.status_code in [400, 401, 403]:
+                        self.key_index = (self.key_index + 1) % len(keys_to_try)
+                        continue
+                    if self.service_name == "lmstudio": return False, last_error_msg
+                    break
+            except Exception as e:
+                last_error_msg = f"Network error: {e}"
+                if self.service_name == "lmstudio": return False, "Could not connect to LM Studio. Ensure it is running on port 1234."
+                self.key_index = (self.key_index + 1) % len(keys_to_try)
+                continue
+                
+        return False, f"Failed to process request. All API keys exhausted.\n\nLast error:\n{last_error_msg}"
+
+    def generate_devotional(self, style, version, theme, length, lang, custom_inst, model, duration="1 Day", format_type="Standard Devotional"):
+        try: num_days = int(duration.split()[0])
+        except: num_days = 1
+        prompt = self._build_base_prompt(version, theme, custom_inst, num_days, format_type) + self._build_format_prompt(style, length, lang, num_days, format_type)
+        return self._send_request(prompt, model, temperature=0.95)
+
+    def revise_reflection(self, full_content, style, length, lang, custom_inst, model, format_type="Standard Devotional"):
+        lang_instruction = lang
+        if lang == "Taglish": lang_instruction = "authentic conversational Filipino Taglish"
+        elif lang == "Conyo": lang_instruction = "stereotypical preppy Filipino 'conyo' speak"
+        length_inst = get_length_instruction(length)
+        
+        prompt = (
+            "You are an inspiring Christian guide.\n"
+            f"Please rewrite ONLY the main body/reflection portion(s) of the following {format_type}. "
+            f"Carefully adopt a '{style}' tone and provide {length_inst} for each section. "
+            f"The ENTIRE output MUST be written in {lang_instruction}.\n\n"
+        )
+        if custom_inst: prompt += f"SPECIAL INSTRUCTION FROM USER: {custom_inst}\n\n"
+        prompt += (
+            "CRITICAL: Keep all structural headers exactly the same. Only change the content text. "
+            "Output the full, updated document preserving all original formatting and separators.\n\n"
+            f"CONTENT TO REVISE:\n{full_content}"
+        )
+        return self._send_request(prompt, model, temperature=0.8)
+
+    def revise_verse(self, full_content, target_version, model, format_type="Standard Devotional"):
+        prompt = (
+            "You are a helpful Christian Bible scholar. "
+            f"Please update ALL Bible verses in the following {format_type} to use ONLY the '{target_version}' translation.\n\n"
+            "CRITICAL: Keep all reflection and structural headers exactly the same. Only change the Verse text and reference. "
+            "Output the full, updated document preserving all original formatting and separators.\n\n"
+            f"CONTENT TO REVISE:\n{full_content}"
+        )
+        return self._send_request(prompt, model, temperature=0.7)
+
+    def generate_qa(self, full_content, lang, custom_inst, model, format_type="Standard Devotional"):
+        lang_instruction = lang
+        if lang == "Taglish": lang_instruction = "authentic conversational Filipino Taglish"
+        elif lang == "Conyo": lang_instruction = "stereotypical preppy Filipino 'conyo' speak"
+        
+        prompt = (
+            "You are an inspiring Christian guide.\n"
+            f"Based on the following {format_type}, generate 2 to 3 thoughtful reflection questions and their suggested answers.\n"
+            f"The ENTIRE output MUST be written in {lang_instruction}.\n\n"
+        )
+        if custom_inst: prompt += f"SPECIAL INSTRUCTION FROM USER: {custom_inst}\n\n"
+        prompt += (
+            "CRITICAL: Format your output cleanly with 'Question 1:', 'Answer:', etc. "
+            "Output ONLY the questions and answers. Do not repeat the original document.\n\n"
+            f"CONTENT:\n{full_content}"
+        )
+        return self._send_request(prompt, model, temperature=0.7)
+
+class GroqBackend(OpenAICompatibleBackend):
+    def __init__(self, config_file): super().__init__(config_file, "groq", "[https://api.groq.com/openai/v1/chat/completions](https://api.groq.com/openai/v1/chat/completions)")
+class OpenAIBackend(OpenAICompatibleBackend):
+    def __init__(self, config_file): super().__init__(config_file, "openai", "[https://api.openai.com/v1/chat/completions](https://api.openai.com/v1/chat/completions)")
+class LMStudioBackend(OpenAICompatibleBackend):
+    def __init__(self, config_file): super().__init__(config_file, "lmstudio", "http://localhost:1234/v1/chat/completions")
+
+class GeminiBackend(BaseBackend):
+    def __init__(self, config_file): super().__init__(config_file, "gemini")
+
+    def _send_request(self, prompt, model, temperature=0.95):
+        if not self.keys: return False, "No API keys found. Please add Gemini API keys in the settings."
+        last_error_msg = "Unknown error occurred."
+
+        for attempt in range(len(self.keys)):
+            if self.key_index >= len(self.keys): self.key_index = 0
+            current_key = self.keys[self.key_index]
+            url = f"[https://generativelanguage.googleapis.com/v1beta/models/](https://generativelanguage.googleapis.com/v1beta/models/){model.strip()}:generateContent?key={current_key.strip()}"
+            headers = {'Content-Type': 'application/json'}
+            data = {
+                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                "generationConfig": {"temperature": temperature},
+                "safetySettings": [
+                    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+                    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+                    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+                    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
+                ]
+            }
+
+            try:
+                response = requests.post(url, headers=headers, json=data, timeout=25)
+                if response.status_code == 200:
+                    try:
+                        candidate = response.json()['candidates'][0]
+                        if 'content' in candidate:
+                            content = candidate['content']['parts'][0]['text']
+                            return True, content
+                        else:
+                            last_error_msg = f"Gemini blocked the response. Reason: {candidate.get('finishReason', 'Unknown')}"
+                            self.key_index = (self.key_index + 1) % len(self.keys)
+                            continue
+                    except (KeyError, IndexError) as e:
+                        last_error_msg = f"Unexpected response format from Gemini: {e}"
+                        self.key_index = (self.key_index + 1) % len(self.keys)
+                        continue
+                elif response.status_code == 429:
+                    last_error_msg = f"Rate limit (429) hit on Key #{self.key_index + 1}. Auto-rotating to next key..."
+                    self.key_index = (self.key_index + 1) % len(self.keys)
+                    time.sleep(0.5)
+                    continue 
+                else:
+                    try: api_err = response.json().get("error", {}).get("message", response.text)
+                    except json.JSONDecodeError: api_err = response.text
+                    last_error_msg = f"API Error (Status {response.status_code}):\n{api_err}"
+                    if response.status_code in [400, 403]:
+                        self.key_index = (self.key_index + 1) % len(self.keys)
+                        continue
+                    if response.status_code == 404: last_error_msg += f"\n\nHint: The model '{model}' may not be available for your region. Try 'gemini-2.5-flash'."
+                    break 
+            except Exception as e:
+                last_error_msg = f"Network error: {e}"
+                self.key_index = (self.key_index + 1) % len(self.keys)
+                continue 
+                
+        return False, f"Failed to generate. All API keys exhausted or rate limited.\n\nLast error:\n{last_error_msg}"
+
+    def generate_devotional(self, style, version, theme, length, lang, custom_inst, model, duration="1 Day", format_type="Standard Devotional"):
+        try: num_days = int(duration.split()[0])
+        except: num_days = 1
+        prompt = self._build_base_prompt(version, theme, custom_inst, num_days, format_type) + self._build_format_prompt(style, length, lang, num_days, format_type)
+        return self._send_request(prompt, model, temperature=0.95)
+
+    def revise_reflection(self, full_content, style, length, lang, custom_inst, model, format_type="Standard Devotional"):
+        lang_instruction = lang
+        if lang == "Taglish": lang_instruction = "authentic conversational Filipino Taglish"
+        elif lang == "Conyo": lang_instruction = "stereotypical preppy Filipino 'conyo' speak"
+        length_inst = get_length_instruction(length)
+        
+        prompt = (
+            "You are an inspiring Christian guide.\n"
+            f"Please rewrite ONLY the main body/reflection portion(s) of the following {format_type}. "
+            f"Carefully adopt a '{style}' tone and provide {length_inst} for each section. "
+            f"The ENTIRE output MUST be written in {lang_instruction}.\n\n"
+        )
+        if custom_inst: prompt += f"SPECIAL INSTRUCTION FROM USER: {custom_inst}\n\n"
+        prompt += (
+            "CRITICAL: Keep all structural headers exactly the same. Only change the content text. "
+            "Output the full, updated document preserving all original formatting and separators.\n\n"
+            f"CONTENT TO REVISE:\n{full_content}"
+        )
+        return self._send_request(prompt, model, temperature=0.8)
+
+    def revise_verse(self, full_content, target_version, model, format_type="Standard Devotional"):
+        prompt = (
+            "You are a helpful Christian Bible scholar. "
+            f"Please update ALL Bible verses in the following {format_type} to use ONLY the '{target_version}' translation.\n\n"
+            "CRITICAL: Keep all reflection and structural headers exactly the same. Only change the Verse text and reference. "
+            "Output the full, updated document preserving all original formatting and separators.\n\n"
+            f"CONTENT TO REVISE:\n{full_content}"
+        )
+        return self._send_request(prompt, model, temperature=0.7)
+
+    def generate_qa(self, full_content, lang, custom_inst, model, format_type="Standard Devotional"):
+        lang_instruction = lang
+        if lang == "Taglish": lang_instruction = "authentic conversational Filipino Taglish"
+        elif lang == "Conyo": lang_instruction = "stereotypical preppy Filipino 'conyo' speak"
+        
+        prompt = (
+            "You are an inspiring Christian guide.\n"
+            f"Based on the following {format_type}, generate 2 to 3 thoughtful reflection questions and their suggested answers.\n"
+            f"The ENTIRE output MUST be written in {lang_instruction}.\n\n"
+        )
+        if custom_inst: prompt += f"SPECIAL INSTRUCTION FROM USER: {custom_inst}\n\n"
+        prompt += (
+            "CRITICAL: Format your output cleanly with 'Question 1:', 'Answer:', etc. "
+            "Output ONLY the questions and answers. Do not repeat the original document.\n\n"
+            f"CONTENT:\n{full_content}"
+        )
+        return self._send_request(prompt, model, temperature=0.7)
+
+# ==========================================
+# 3. TIKTOK TTS ENGINE, VOICEBOX & ELEVENLABS ROUTER
+# ==========================================
+TIKTOK_VOICES = {
+    "US Female 1": "en_us_001", "US Female 2 (Jessie)": "en_us_002", "US Male 1": "en_us_006",
+    "US Male 2": "en_us_007", "US Male 3": "en_us_009", "US Male 4": "en_us_010",
+    "UK Male 1": "en_uk_001", "UK Male 2": "en_uk_003", "AU Female 1": "en_au_001", "AU Male 1": "en_au_002",
+    "Char - Ghostface": "en_us_ghostface", "Char - Chewbacca": "en_us_chewbacca",
+    "Char - C3PO": "en_us_c3po", "Char - Stitch": "en_us_stitch", "Char - Stormtrooper": "en_us_stormtrooper",
+    "Char - Rocket": "en_us_rocket", "Special - Narrator": "en_male_narration",
+    "Special - Funny / Wacky": "en_male_funny", "Special - Peaceful / Emotional": "en_female_emotional",
+    "Singing - Alto": "en_female_ht_f08_wonderful_world", "Singing - Tenor": "en_male_m03_lobby",
+    "Singing - Warm Breeze": "en_female_f08_salut_damour", "Singing - Sunshine Soon": "en_male_m03_sunshine_soon",
+    "Intl - French Female": "fr_002", "Intl - French Male": "fr_001", "Intl - Spanish Male": "es_002",
+    "Intl - Spanish (MX) Male": "es_mx_002", "Intl - Portuguese (BR) Female": "br_001",
+    "Intl - Portuguese (BR) Male": "br_005", "Intl - German Female": "de_001", "Intl - German Male": "de_002",
+    "Intl - Japanese Female": "jp_001", "Intl - Japanese Male": "jp_006", "Intl - Korean Male 1": "kr_002",
+    "Intl - Korean Female 1": "kr_003"
+}
+
+def generate_tiktok_audio(text, voice_id, session_id, output_path):
+    try:
+        text = text.replace('\n', ' . ')
+        words = text.split(' ')
+        chunks, current_chunk = [], ""
+        for word in words:
+            if len(current_chunk) + len(word) > 200:
+                chunks.append(current_chunk.strip())
+                current_chunk = word + " "
+            else: current_chunk += word + " "
+        if current_chunk: chunks.append(current_chunk.strip())
+            
+        final_audio = b""
+        headers = {
+            'User-Agent': 'com.zhiliaoapp.musically/2022600030 (Linux; U; Android 7.1.2; en_US; Baidu; Build/N2G48H; Cronet/TTNetVersion:5c20c020 2020-04-23 QuicVersion:0144d358 2020-03-24)',
+            'Cookie': f'sessionid={(session_id or "").strip()}'
+        }
+        for chunk in chunks:
+            if not chunk: continue
+            req_text = urllib.parse.quote(chunk)
+            url = f"[https://api16-normal-c-useast1a.tiktokv.com/media/api/text/speech/invoke/?text_speaker=](https://api16-normal-c-useast1a.tiktokv.com/media/api/text/speech/invoke/?text_speaker=){voice_id}&req_text={req_text}&speaker_map_type=0&aid=1233"
+            res = requests.post(url, headers=headers, timeout=15)
+            if res.status_code == 200:
+                data = res.json()
+                if data.get("message") == "Couldn't load speech. Try again.": return False, "Invalid TikTok Session ID or Rate Limited."
+                vstr = data.get("data", {}).get("v_str")
+                if vstr: final_audio += base64.b64decode(vstr)
+                else: return False, f"TikTok API error: {data.get('message', 'No audio data')}"
+            elif res.status_code in [502, 503, 504]:
+                return False, f"TikTok Server Error (HTTP {res.status_code}). The TikTok server is currently overloaded or down. Please wait a few moments and try again, or switch to Voicebox/ElevenLabs."
+            else: return False, f"HTTP Error {res.status_code}"
+        
+        if final_audio:
+            with open(output_path, "wb") as f: f.write(final_audio)
+            return True, output_path
+        return False, "No audio generated."
+    except Exception as e: return False, str(e)
+
+
+def generate_voicebox_audio(text, server_url, voice_preset, selected_engine, output_path, status_callback=None, cancel_callback=None):
+    try:
+        base_url = (server_url or "").strip().rstrip('/')
+        actual_profile_id = (voice_preset or "").strip() if voice_preset else "default"
+        actual_engine = selected_engine if selected_engine != "Auto" else None
+        
+        try:
+            profiles_req = requests.get(f"{base_url}/profiles", timeout=5)
+            if profiles_req.status_code == 200:
+                p_data = profiles_req.json()
+                
+                items = []
+                if isinstance(p_data, list):
+                    items = p_data
+                elif isinstance(p_data, dict) and "items" in p_data:
+                    items = p_data["items"]
+                    
+                for p in items:
+                    if str(p.get("name", "")).lower() == str(actual_profile_id).lower() or str(p.get("id", "")) == str(actual_profile_id):
+                        actual_profile_id = p.get("id", actual_profile_id)
+                        if selected_engine == "Auto" and p.get("engine"):
+                            actual_engine = p.get("engine")
+                        break
+        except Exception: pass 
+
+        endpoint = f"{base_url}/generate"
+        
+        import re
+        vb_text = text.replace('*', '').replace('"', '').replace('[', '').replace(']', '').replace('(', '').replace(')', '').strip()
+        
+        payload = {"text": vb_text, "profile_id": actual_profile_id}
+        if actual_engine: payload["engine"] = actual_engine
+        
+        is_waiting = [True]
+        start_time = time.time()
+        
+        def progress_tracker():
+            while is_waiting[0]:
+                if cancel_callback and cancel_callback():
+                    break
+                elapsed = int(time.time() - start_time)
+                if status_callback:
+                    status_callback(f"⏳ Voicebox is rendering full audio... Please wait ({elapsed}s)")
+                time.sleep(1)
+        
+        tracker = threading.Thread(target=progress_tracker, daemon=True)
+        tracker.start()
+        
+        try:
+            response = requests.post(endpoint, json=payload, timeout=1800)
+            is_waiting[0] = False 
+            
+            if response.status_code == 200:
+                if response.content.startswith(b'RIFF') or response.content.startswith(b'ID3') or response.headers.get('Content-Type', '').startswith('audio/'):
+                    with open(output_path, "wb") as f: f.write(response.content)
+                    return True, output_path
+                
+                try:
+                    data = response.json()
+                    
+                    b64 = data.get("audio_base64") or data.get("audio") or data.get("data") or data.get("base64")
+                    if b64 and isinstance(b64, str) and len(b64) > 100 and not b64.startswith("http") and not b64.startswith("/") and not b64.startswith("C:\\") and not b64.startswith("D:\\"):
+                        import base64
+                        with open(output_path, "wb") as f: f.write(base64.b64decode(b64))
+                        return True, output_path
+                        
+                    audio_url = data.get("output_file_path") or data.get("output_file_url") or data.get("url") or data.get("path") or data.get("file_path") or data.get("audio_file") or data.get("file")
+                    if not audio_url and isinstance(b64, str) and (b64.startswith("http") or b64.startswith("/") or ":" in b64):
+                        audio_url = b64
+                        
+                    if audio_url:
+                        audio_url = audio_url.strip('"').strip("'")
+                        if os.path.exists(audio_url): 
+                            import shutil
+                            shutil.copy2(audio_url, output_path)
+                            return True, output_path
+                        
+                        dl_url = audio_url if audio_url.startswith("http") else f"{base_url}/{audio_url.lstrip('/')}"
+                        dl_res = requests.get(dl_url, timeout=120)
+                        if dl_res.status_code == 200 and len(dl_res.content) > 100:
+                            with open(output_path, "wb") as f: f.write(dl_res.content)
+                            return True, output_path
+                    
+                    gen_id = data.get("id") or data.get("generation_id") or data.get("task_id")
+                    if gen_id:
+                        is_waiting[0] = True
+                        start_time = time.time()
+                        tracker = threading.Thread(target=progress_tracker, daemon=True)
+                        tracker.start()
+                        
+                        for attempt in range(900): 
+                            if cancel_callback and cancel_callback():
+                                is_waiting[0] = False
+                                return False, "Canceled by user."
+                                
+                            try:
+                                audio_res = requests.get(f"{base_url}/audio/{gen_id}", timeout=20)
+                                if audio_res.status_code == 200 and len(audio_res.content) > 100:
+                                    is_waiting[0] = False
+                                    with open(output_path, "wb") as f: f.write(audio_res.content)
+                                    return True, output_path
+                            except requests.exceptions.RequestException: pass
+                            time.sleep(2)
+                            
+                        is_waiting[0] = False
+                        return False, "Voicebox Audio Error: Polling timed out after 30 minutes."
+                        
+                    return False, f"Voicebox Error: Unrecognized API JSON structure: {str(data)[:200]}"
+                except Exception as e:
+                    return False, f"Voicebox JSON Parse Error: {e}"
+            else:
+                is_waiting[0] = False
+                return False, f"Voicebox API Error: {response.status_code} - {response.text[:100]}"
+                
+        except requests.exceptions.Timeout:
+            is_waiting[0] = False
+            return False, "Voicebox Server Error: Generation timed out after 30 minutes."
+        except Exception as req_e:
+            is_waiting[0] = False
+            return False, f"Voicebox Request Error: {req_e}"
+            
+    except Exception as e:
+        return False, f"Voicebox Engine Error: {e}"
+
+def generate_elevenlabs_audio(text, presets, start_preset_name, output_path):
+    if not presets: return False, "No ElevenLabs presets found. Please click '⚙️ Manage ElevenLabs Keys' to add your accounts.", start_preset_name
+
+    preset_keys = list(presets.keys())
+    start_index = preset_keys.index(start_preset_name) if start_preset_name in preset_keys else 0
+    payload = {"text": text, "model_id": "eleven_multilingual_v2", "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}}
+    last_error = "Unknown error."
+
+    for attempt in range(len(preset_keys)):
+        current_idx = (start_index + attempt) % len(preset_keys)
+        active_preset_name = preset_keys[current_idx]
+        preset_data = presets[active_preset_name]
+        
+        if isinstance(preset_data, str):
+            active_voice_id, current_key = preset_data, "" 
+        else:
+            active_voice_id = preset_data.get("voice_id", "")
+            current_key = preset_data.get("api_key", "")
+            
+        if not current_key or not active_voice_id: continue
+
+        url = f"[https://api.elevenlabs.io/v1/text-to-speech/](https://api.elevenlabs.io/v1/text-to-speech/){active_voice_id}?output_format=mp3_44100_128"
+        headers = {"Accept": "audio/mpeg", "Content-Type": "application/json", "xi-api-key": current_key}
+        
+        try:
+            response = requests.post(url, json=payload, headers=headers, timeout=300) 
+            if response.status_code == 200:
+                with open(output_path, "wb") as f: f.write(response.content)
+                return True, output_path, active_preset_name 
+            elif response.status_code in [401, 403, 429]: 
+                last_error = f"Preset '{active_preset_name}' rejected (Out of limits)! Rotating..."
+                continue 
+            else:
+                last_error = f"API Error {response.status_code}: {response.text}"
+                break
+        except requests.exceptions.ConnectionError:
+            last_error = "Connection Refused. Check your internet."
+            break
+        except Exception as e:
+            last_error = f"Network error on '{active_preset_name}': {e}. Trying next preset..."
+            continue 
+
+    return False, f"ElevenLabs Failed. All presets exhausted or invalid.\n\nLast error:\n{last_error}", start_preset_name
+
+def generate_fish_speech_audio(text, server_url, presets, start_preset_name, output_path, status_callback=None, cancel_callback=None):
+    if not presets: return False, "No Fish Speech presets found. Please configure them in 'Manage Fish Speech'.", start_preset_name
+    if not server_url: return False, "Missing Fish Speech Server URL/Space.", start_preset_name
+
+    base_url = (server_url or "").strip().rstrip('/')
+    
+    if "0.0.0.0" in base_url:
+        base_url = base_url.replace("0.0.0.0", "127.0.0.1")
+        
+    preset_data = presets.get(start_preset_name, {})
+    ref_audio_path = preset_data.get("audio", "")
+    ref_text_path = preset_data.get("text", "")
+
+    ref_audio_path = ref_audio_path.strip('\"\'')
+    ref_text_path = ref_text_path.strip('\"\'')
+
+    if not ref_audio_path or not os.path.exists(ref_audio_path):
+        return False, f"Reference audio not found for preset '{start_preset_name}'. Please verify the path.", start_preset_name
+
+    ref_text_content = ""
+    if ref_text_path and os.path.exists(ref_text_path):
+        try:
+            with open(ref_text_path, "r", encoding="utf-8") as f:
+                ref_text_content = f.read().strip()
+        except Exception as e:
+            pass
+
+    endpoint = f"{base_url}/v1/tts"
+    
+    is_waiting = [True]
+    start_time = time.time()
+    
+    def progress_tracker():
+        while is_waiting[0]:
+            if cancel_callback and cancel_callback():
+                break
+            elapsed = int(time.time() - start_time)
+            if status_callback:
+                status_callback(f"⏳ Fish Speech is rendering... Please wait ({elapsed}s)")
+            time.sleep(1)
+    
+    tracker = threading.Thread(target=progress_tracker, daemon=True)
+    tracker.start()
+    
+    try:
+        import base64
+        with open(ref_audio_path, 'rb') as f_audio:
+            audio_b64 = base64.b64encode(f_audio.read()).decode('utf-8')
+            
+        payload = {
+             "text": text,
+             "format": "wav",
+             "references": [
+                 {
+                     "audio": audio_b64,
+                     "text": ref_text_content
+                 }
+             ],
+             "normalize": True
+        }
         
         print(f"[Fish Speech] 🌐 Connecting to RAW API Server at {endpoint}...")
         
@@ -1004,7 +1839,7 @@ def main(page: ft.Page):
 
     tf_tiktok_session = ft.TextField(label="TikTok Session ID", password=True)
     dd_tiktok_voice = ft.Dropdown(label="TikTok Voice Preset", options=[ft.dropdown.Option(x) for x in TIKTOK_VOICES.keys()])
-    tf_voicebox_url = ft.TextField(label="Voicebox PC URL (e.g. http://192.168.1.X:17493)")
+    tf_voicebox_url = ft.TextField(label="Voicebox PC URL (e.g. [http://192.168.1.](http://192.168.1.)X:17493)")
     tf_voicebox_preset = ft.TextField(label="Voicebox Preset (Optional)")
     dd_voicebox_engine = ft.Dropdown(label="Voicebox Engine", options=[ft.dropdown.Option(x) for x in ["Auto", "kokoro", "q", "xtts", "piper", "styletts2"]])
     tf_fish_url = ft.TextField(label="Fish Speech Server (Gradio URL or HF Space)")
@@ -1053,7 +1888,6 @@ def main(page: ft.Page):
 
     # =========================================================
     # THE AUDIO PLAYER INJECTION
-    # Fully Restored Native Audio Object
     # =========================================================
     try:
         audio_player = Audio(autoplay=False)
@@ -1107,7 +1941,7 @@ def main(page: ft.Page):
     tf_voicebox_url.value = app_settings.get("voicebox_url", "")
     tf_voicebox_preset.value = app_settings.get("voicebox_preset", "")
     dd_voicebox_engine.value = app_settings.get("voicebox_engine", "Auto")
-    tf_fish_url.value = app_settings.get("fish_url", "http://127.0.0.1:8080")
+    tf_fish_url.value = app_settings.get("fish_url", "[http://127.0.0.1:8080](http://127.0.0.1:8080)")
     tf_cache_dir.value = app_settings.get("audio_cache_dir", os.path.join(DATA_DIR, "audio_cache"))
     
     el_presets_dict = app_settings.get("elevenlabs_presets", {})
@@ -1731,7 +2565,7 @@ def main(page: ft.Page):
         url = (tf_voicebox_url.value or "").strip().rstrip('/')
         if not url: return show_snack("Please enter a Voicebox URL first.", ft.Colors.RED)
         if is_android_sys() and ("127.0.0.1" in url or "localhost" in url):
-            return show_error_dialog("⚠️ You cannot use 127.0.0.1 or localhost on a phone!\n\nThat points to the phone itself. You must use your PC's actual Wi-Fi IP Address (e.g., http://192.168.1.5:17493).")
+            return show_error_dialog("⚠️ You cannot use 127.0.0.1 or localhost on a phone!\n\nThat points to the phone itself. You must use your PC's actual Wi-Fi IP Address (e.g., [http://192.168.1.5:17493](http://192.168.1.5:17493)).")
             
         set_loading(True, "Testing connection...")
         def worker():
@@ -2126,7 +2960,7 @@ def main(page: ft.Page):
         if engine == "Fish Speech" and not fish_presets and not chk_force_cache.value: return show_snack("Missing Fish Speech Settings! Please configure a preset.", ft.Colors.RED)
             
         if not chk_force_cache.value and is_android_sys() and engine in ["Local PC Voicebox", "Fish Speech"] and ("127.0.0.1" in server_url or "localhost" in server_url or "127.0.0.1" in fish_url or "localhost" in fish_url):
-            return show_error_dialog("⚠️ You cannot use 127.0.0.1 or localhost on a phone!\n\nThat points to the phone itself. You must use your PC's actual Wi-Fi IP Address (e.g., http://192.168.1.5:8080).")
+            return show_error_dialog("⚠️ You cannot use 127.0.0.1 or localhost on a phone!\n\nThat points to the phone itself. You must use your PC's actual Wi-Fi IP Address (e.g., [http://192.168.1.5:8080](http://192.168.1.5:8080)).")
             
         app_state["is_rendering_audio"] = True
         app_state["cancel_render"] = False
@@ -2148,7 +2982,7 @@ def main(page: ft.Page):
                         try: os.remove(os.path.join(DATA_DIR, f))
                         except: pass
                 
-                output_file = f"{content_hash}.mp3"
+                output_file = f"tts_output_{int(my_render_id)}.mp3"
                 output_path = os.path.join(DATA_DIR, output_file)
                 
                 cache_dir = getattr(tf_cache_dir, 'value', "").strip()
@@ -2266,14 +3100,12 @@ def main(page: ft.Page):
                                         shutil.copy2(output_path, cache_path_pure)
                                         print(f"✅ Auto-Cached audio to {cache_path_pure}")
                                         
-                                        # Also make sure it's copied to DATA_DIR so the Flet asset server sees it
                                         if os.path.abspath(output_path) != os.path.abspath(os.path.join(DATA_DIR, output_file)):
                                             shutil.copy2(output_path, os.path.join(DATA_DIR, output_file))
                                             
                                 except Exception as e:
                                     print(f"⚠️ Cache Error: {e}")
                             else:
-                                # It was cached somewhere else, make sure it's in DATA_DIR for Flet to serve
                                 if os.path.abspath(output_path) != os.path.abspath(os.path.join(DATA_DIR, output_file)):
                                     shutil.copy2(output_path, os.path.join(DATA_DIR, output_file))
 
@@ -2291,6 +3123,17 @@ def main(page: ft.Page):
                         temp_avi_path = os.path.join(DATA_DIR, f"temp_video_{int(time.time())}.avi")
                         temp_mp4_path = os.path.join(DATA_DIR, "temp_final_video.mp4")
                         
+                        play_target_filename = ""
+                        play_target_path = ""
+                        if not is_silent_playback:
+                            ext = ".mp3" if output_path.endswith(".mp3") else ".wav"
+                            play_target_filename = f"play_{int(my_render_id)}{ext}"
+                            play_target_path = os.path.join(DATA_DIR, play_target_filename)
+                            try: shutil.copy2(output_path, play_target_path)
+                            except: 
+                                play_target_filename = os.path.basename(output_path)
+                                play_target_path = output_path
+
                         is_processing[0] = False 
                         
                         def ui_updates():
@@ -2312,18 +3155,25 @@ def main(page: ft.Page):
                                     try: 
                                         global audio_player
                                         if 'audio_player' not in globals() or not audio_player:
-                                            audio_player = Audio(autoplay=False)
-                                            audio_player.on_state_changed = on_audio_state_changed
-                                            page.overlay.append(audio_player)
-                                            page.update()
+                                            if AudioControl:
+                                                audio_player = AudioControl(autoplay=False)
+                                                audio_player.on_state_changed = on_audio_state_changed
+                                                page.overlay.append(audio_player)
+                                                page.update()
                                             
-                                        # Use Flet's internal asset routing directly
-                                        audio_player.src = output_file
-                                        page.update()
-                                        audio_player.update()
-                                        audio_player.play()
+                                        if audio_player:
+                                            # BYPASS FLET HTTP SERVER!
+                                            # Feed ExoPlayer the absolute local hard-drive path
+                                            audio_player.src = play_target_path
+                                            try: audio_player.src_base64 = None
+                                            except: pass
+                                            page.update()
+                                            audio_player.update()
+                                            audio_player.play()
+                                        else:
+                                            show_snack("Audio Engine Missing! Install the real APK to hear sound.", ft.Colors.RED)
                                     except Exception as e:
-                                        show_snack("Audio Engine Missing! Install the real APK to hear sound.", ft.Colors.RED)
+                                        show_snack(f"Flet Audio Error: {e}", ft.Colors.RED)
 
                             if record_video and is_cached:
                                 status_msg = "🔴 Recording Video (Audio from Cache)..."
