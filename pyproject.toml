@@ -1,0 +1,14 @@
+[tool.flet.app]
+# Keep repository metadata, local environments and private user data out of APKs.
+exclude = [
+    ".git",
+    ".github",
+    ".gitignore",
+    ".venv",
+    ".venv_win",
+    ".venv_mac",
+    ".venv_linux",
+    "__pycache__",
+    "DailyDevotionalData",
+    "error_log.txt",
+]

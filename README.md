@@ -26,7 +26,9 @@ flet build apk --project devotional --org com.edu.devotional \
 
 On Windows, activate the environment with `.venv\Scripts\activate` instead.
 Flet installs its required Flutter, JDK and Android SDK if they are missing.
-The APK is written under `build/apk/`. The application ID remains
+The APK is written under `build/apk/`. The packaging exclusions in
+`pyproject.toml` keep Git metadata, local environments and saved user data out
+of the APK. The application ID remains
 `com.edu.devotional.devotional`.
 
 These builds use Flet's default debug signing for installation and testing.
