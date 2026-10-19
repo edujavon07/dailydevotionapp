@@ -5,9 +5,10 @@ on:
   push:
     branches:
       - main
+      - coderabbit/update-devotionapp-build-apk/385dbd29
 
-env:
-  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -22,31 +23,35 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Generate Strict Requirements
-        # This is the magic fix! It forces the compiler to see flet-audio
-        run: |
-          rm -f requirements.txt
-          echo "flet" > requirements.txt
-          echo "flet-audio" >> requirements.txt
-          echo "requests" >> requirements.txt
-          cat requirements.txt
-
       - name: Install Dependencies
         run: |
-          pip install -r requirements.txt
+          python -m pip install -r requirements.txt 'flet-cli==0.28.3'
+          python -m pip check
+          python -m py_compile main.py
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: 'stable'
+          flutter-version: '3.29.2'
+          channel: stable
+          cache: true
 
       - name: Build the APK
         run: |
-          flet build apk --project devotional --org com.edu.devotional
+          flet build apk --project devotional --org com.edu.devotional \
+          --product 'Daily Devotional' --build-version 10.0.0 \
+          --build-number "$((100 + ${{ github.run_number }}))"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: Daily-Devotional-App
           path: build/apk/**/*.apk
-          retention-days: 3
+          if-no-files-found: error
+          retention-days: 14
